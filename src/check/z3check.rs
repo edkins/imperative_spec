@@ -54,6 +54,10 @@ impl Z3Value {
         }
     }
 
+    fn ne(&self, other: &Z3Value) -> Result<z3::ast::Bool, CheckError> {
+        self.eq(other).map(|eq_ast| eq_ast.not())
+    }
+
     fn type_check(&self, typ: &Type) -> Result<(), CheckError> {
         let self_type = self.get_type();
         if self_type.name == typ.name {
@@ -209,12 +213,19 @@ impl Stmt {
 
 fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Value, CheckError> {
     match (name, args.len()) {
-        ("eq", 2) => {
+        ("==", 2) => {
             let eq_ast = args[0].eq(&args[1])?;
             Ok(Z3Value::Bool(eq_ast))
         }
-        ("add", 2) => {
+        ("!=", 2) => {
+            let eq_ast = args[0].ne(&args[1])?;
+            Ok(Z3Value::Bool(eq_ast))
+        }
+        ("+", 2) => {
             Ok(Z3Value::Int(args[0].int()? + args[1].int()?))
+        }
+        ("-", 2) => {
+            Ok(Z3Value::Int(args[0].int()? - args[1].int()?))
         }
         ("assert", 1) => {
             let bool_arg = args[0].bool()?;

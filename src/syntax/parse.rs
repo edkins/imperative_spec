@@ -1,4 +1,4 @@
-use nom::{IResult, Parser, branch::alt, bytes::complete::{tag, take_until, take_while, take_while1}, character::complete::{anychar, satisfy}, combinator::{all_consuming, map, opt, recognize, value}, multi::{many0, separated_list0}, sequence::{delimited, preceded, terminated}};
+use nom::{IResult, Parser, branch::alt, bytes::complete::{tag, take_until, take_while, take_while1}, character::complete::{anychar, satisfy}, combinator::{all_consuming, map, opt, recognize, value}, multi::{many0, separated_list0}, sequence::{delimited, pair, preceded, terminated}};
 
 use crate::syntax::ast::*;
 
@@ -20,6 +20,10 @@ enum Symbol {
     Colon,
     Assign,
     Arrow,
+    Plus,
+    Minus,
+    EqualEqual,
+    NotEqual,
 }
 
 fn pure_whitespace1(input: &str) -> IResult<&str, &str> {
@@ -136,7 +140,7 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
 
 fn is_multi_char_sym(ch: char) -> bool {
     match ch {
-        ':' | '=' | '-' | '<' | '>' => true,
+        ':' | '=' | '+' | '-' | '<' | '>' | '!' => true,
         _ => false,
     }
 }
@@ -147,6 +151,10 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         ":" => Ok((input, Symbol::Colon)),
         "=" => Ok((input, Symbol::Assign)),
         "->" => Ok((input, Symbol::Arrow)),
+        "+" => Ok((input, Symbol::Plus)),
+        "-" => Ok((input, Symbol::Minus)),
+        "!=" => Ok((input, Symbol::NotEqual)),
+        "==" => Ok((input, Symbol::EqualEqual)),
         _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char))),
     }
 }
@@ -224,13 +232,83 @@ fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
     }
 }
 
-fn expr_comma(input: &str) -> IResult<&str, Expr> {
+fn expr_tight(input: &str) -> IResult<&str, Expr> {
     alt((
         variable_or_call,
         literal,
         delimited(symbol(Symbol::OpenParen), expr, symbol(Symbol::CloseParen)),
         delimited(symbol(Symbol::OpenBrace), expr, symbol(Symbol::CloseBrace))
     )).parse(input)
+}
+
+fn plusminus(input: &str) -> IResult<&str, Symbol> {
+    alt((
+        symbol(Symbol::Plus),
+        symbol(Symbol::Minus),
+    )).parse(input)
+}
+
+fn cmpop(input: &str) -> IResult<&str, Symbol> {
+    alt((
+        symbol(Symbol::EqualEqual),
+        symbol(Symbol::NotEqual),
+    )).parse(input)
+}
+
+fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
+    let (input, mut exprs) = expr_tight(input)?;
+    let mut inp = input;
+    loop {
+        let (input, op) = opt(pair(plusminus, expr_tight)).parse(inp)?;
+        inp = input;
+
+        match op {
+            Some((Symbol::Plus, rhs)) => {
+                let new_expr = Expr::FunctionCall {
+                    name: "+".to_owned(),
+                    args: vec![exprs.clone(), rhs],
+                };
+                exprs = new_expr;
+            }
+            Some((Symbol::Minus, rhs)) => {
+                let new_expr = Expr::FunctionCall {
+                    name: "-".to_owned(),
+                    args: vec![exprs.clone(), rhs],
+                };
+                exprs = new_expr;
+            }
+            None => break,
+            _ => unreachable!(),
+        }
+    }
+    Ok((inp, exprs))
+}
+
+fn expr_cmp(input: &str) -> IResult<&str, Expr> {
+    let (input, expr) = expr_plusminus(input)?;
+    let (input, cmp_opt) = opt(pair(cmpop, expr_plusminus)).parse(input)?;
+    match cmp_opt {
+        Some((Symbol::EqualEqual, rhs)) => {
+            let new_expr = Expr::FunctionCall {
+                name: "==".to_owned(),
+                args: vec![expr, rhs],
+            };
+            Ok((input, new_expr))
+        }
+        Some((Symbol::NotEqual, rhs)) => {
+            let new_expr = Expr::FunctionCall {
+                name: "!=".to_owned(),
+                args: vec![expr, rhs],
+            };
+            Ok((input, new_expr))
+        }
+        None => Ok((input, expr)),
+        _ => unreachable!(),
+    }
+}
+
+fn expr_comma(input: &str) -> IResult<&str, Expr> {
+    expr_cmp(input)
 }
 
 fn expr_semicolon(input: &str) -> IResult<&str, Expr> {

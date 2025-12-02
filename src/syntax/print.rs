@@ -24,6 +24,8 @@ enum BindingStrength {
     NeverBracket,
     Semicolon,
     Comma,
+    Comparison,
+    PlusMinus,
     AlwaysBracket,
 }
 
@@ -52,14 +54,32 @@ impl Expr {
             Expr::Variable(x) => write!(f, "{}", x),
             Expr::FunctionCall { name, args } =>
             {
-                write!(f, "{}(", name)?;
-                for (i, arg) in args.iter().enumerate() {
-                    arg.fmt_with_binding_strength(f, BindingStrength::Comma)?;
-                    if i != args.len() - 1 {
-                        write!(f, ", ")?;
+                match &name as &str {
+                    "==" | "!=" | "<" | "<=" | ">" | ">=" => {
+                        strength.open_brace(f, BindingStrength::Comparison)?;
+                        args[0].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
+                        write!(f, " {} ", name)?;
+                        args[1].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
+                        strength.close_brace(f, BindingStrength::Comparison)
+                    }
+                    "+" | "-" => {
+                        strength.open_brace(f, BindingStrength::PlusMinus)?;
+                        args[0].fmt_with_binding_strength(f, BindingStrength::PlusMinus)?;
+                        write!(f, " {} ", name)?;
+                        args[1].fmt_with_binding_strength(f, BindingStrength::PlusMinus)?;
+                        strength.close_brace(f, BindingStrength::PlusMinus)
+                    }
+                    _ => {
+                        write!(f, "{}(", name)?;
+                        for (i, arg) in args.iter().enumerate() {
+                            arg.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                            if i != args.len() - 1 {
+                                write!(f, ", ")?;
+                            }
+                        }
+                        write!(f, ")")
                     }
                 }
-                write!(f, ")")
             }
             Expr::Semicolon(stmt, expr) => {
                 strength.open_brace(f, BindingStrength::Semicolon)?;
