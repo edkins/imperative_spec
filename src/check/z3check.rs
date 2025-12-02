@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::NulError, str::FromStr};
+use std::{collections::{HashMap, HashSet}, ffi::NulError, str::FromStr};
 
 use z3;
 use crate::syntax::ast::*;
@@ -22,6 +22,7 @@ enum Z3Value {
 struct Env {
     vars: HashMap<String, Type>,
     assumptions: Vec<z3::ast::Bool>,
+    side_effects: HashSet<String>,
 }
 
 impl From<NulError> for CheckError {
@@ -84,6 +85,15 @@ impl Z3Value {
             }),
         }
     }
+
+    fn string(&self) -> Result<&z3::ast::String, CheckError> {
+        match self {
+            Z3Value::Str(s) => Ok(s),
+            _ => Err(CheckError {
+                message: "Expected String type".to_owned(),
+            }),
+        }
+    }
 }
 
 impl Literal {
@@ -113,6 +123,7 @@ impl Env {
         Env {
             vars: HashMap::new(),
             assumptions: Vec::new(),
+            side_effects: HashSet::new(),
         }
     }
 
@@ -155,6 +166,22 @@ impl Env {
             Ok(())
         }
     }
+
+    fn prints(&mut self) {
+        self.side_effects.insert("print".to_owned());
+    }
+
+    fn mallocs(&mut self) {
+        self.side_effects.insert("malloc".to_owned());
+    }
+
+    fn print_side_effects(&self) {
+        let mut effects: Vec<_> = self.side_effects.iter().collect();
+        effects.sort();
+        for effect in &effects {
+            println!("Side effect: {}", effect);
+        }
+    }
 }
 
 impl Stmt {
@@ -194,6 +221,11 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
             env.assert(bool_arg)?;
             Ok(Z3Value::Void)
         }
+        ("println", 1) => {
+            args[0].string()?;
+            env.prints();
+            Ok(Z3Value::Void)
+        }
         _ => Err(CheckError {
             message: format!("User defined functions not implemented yet: {}", name),
         }),
@@ -228,6 +260,8 @@ fn z3_check_funcdef(func: &FuncDef) -> Result<(), CheckError> {
     }
     let body_z3_value = func.body.z3_check(&mut env)?;
     body_z3_value.type_check(&func.return_type)?;
+    println!("Checked function: {}", func.name);
+    env.print_side_effects();
     Ok(())
 }
 
