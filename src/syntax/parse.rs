@@ -299,8 +299,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         separated_list0(symbol(Symbol::Comma), arg),
         symbol(Symbol::CloseParen)
     ).parse(input)?;
-    let (input, _) = symbol(Symbol::Arrow)(input)?;
-    let (input, return_type) = typ(input)?;
+    let (input, return_type) = opt(preceded(symbol(Symbol::Arrow), typ)).parse(input)?;
     let (input, body) = delimited(
         symbol(Symbol::OpenBrace),
         expr,
@@ -309,7 +308,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
     Ok((input, FuncDef {
         name,
         args,
-        return_type,
+        return_type: return_type.unwrap_or_else(|| Type { name: "void".to_string() }),
         body,
     }))
 }
@@ -416,6 +415,14 @@ mod test {
     #[test]
     fn test_function_with_let_semicolon() {
         let funcdef = "fn main() -> void { let x = 2; x }";
+        let result = super::funcdef(funcdef);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
+    }
+
+    #[test]
+    fn test_function_implied_void_return() {
+        let funcdef = "fn main() { println(\"Hello\") }";
         let result = super::funcdef(funcdef);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().0, "");

@@ -139,7 +139,7 @@ mod test {
             },
         };
 
-        let expected = "add(a, b) {\nsum(a, b)\n}";
+        let expected = "fn add(a, b) {\nsum(a, b)\n}";
         let actual = format!("{}", func);
         assert_eq!(actual, expected);
     }
