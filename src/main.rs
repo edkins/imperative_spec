@@ -17,4 +17,6 @@ fn main() {
     let source_file = syntax::parse::parse_source_file(&input)
         .expect("Failed to parse input file");
     println!("{}", source_file);
+    check::z3check::z3_check(&source_file)
+        .expect("Failed to check function");
 }

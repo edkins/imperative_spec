@@ -18,6 +18,7 @@ impl Display for Literal {
     }
 }
 
+#[allow(dead_code)]
 #[derive(PartialEq, PartialOrd, Ord, Eq, Clone, Copy)]
 enum BindingStrength {
     NeverBracket,
