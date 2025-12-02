@@ -1,0 +1,5 @@
+fn main() -> void {
+    let x = 2;
+    let y = 3;
+    assert(eq(add(x, y), 5))
+}

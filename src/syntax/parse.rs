@@ -62,6 +62,7 @@ fn word(input: &str) -> IResult<&str, Word> {
     )).parse(input)?;
     let word = match ident {
         "fn" => Word::Fn,
+        "let" => Word::Let,
         _ => Word::Identifier(ident.to_string()),
     };
     Ok((input, word))
@@ -256,7 +257,7 @@ fn stmt_let(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = keyword(Word::Let)(input)?;
     let (input, name) = identifier(input)?;
     let (input, _) = symbol(Symbol::Assign)(input)?;
-    let (input, value) = expr(input)?;
+    let (input, value) = expr_comma(input)?;
     Ok((input, Stmt::Let {
         name,
         value,
@@ -352,19 +353,13 @@ pub fn parse_source_file(input: &str) -> Result<SourceFile, ErrorLocation> {
 
 #[cfg(test)]
 mod test {
-    use nom::bytes::complete::tag;
-    use nom::multi::{many0, separated_list0};
-    use nom::sequence::{delimited};
-    use nom::Parser;
-
-    use crate::syntax::parse::Symbol;
-
     #[test]
     fn test_var()
     {
         let expr = "my_variable";
         let result = super::variable_or_call(expr);
         assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
     }
 
     #[test]
@@ -376,18 +371,12 @@ mod test {
     }
 
     #[test]
-    fn test_parens() {
-        let expr = "()";
-        let result = delimited(super::symbol(Symbol::OpenParen), separated_list0(super::symbol(Symbol::Comma), super::expr), super::symbol(Symbol::CloseParen)).parse(expr);
-        assert!(result.expect("Failed to parse parens").0.is_empty());
-    }
-
-    #[test]
     fn test_empty_call_suffix()
     {
         let suffix = "()";
         let result = super::call_suffix("my_function".to_string())(suffix);
         assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
     }
 
     #[test]
@@ -396,6 +385,7 @@ mod test {
         let expr = "foo()";
         let result = super::expr(expr);
         assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
     }
 
     #[test]
@@ -403,5 +393,30 @@ mod test {
         let expr = "println(\"Hello, world!\")";
         let result = super::expr(expr);
         assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
+    }
+
+    #[test]
+    fn test_let() {
+        let stmt = "let x = 5";
+        let result = super::stmt(stmt);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
+    }
+
+    #[test]
+    fn test_let_semicolon() {
+        let expr = "let x = 5; x";
+        let result = super::expr(expr);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
+    }
+
+    #[test]
+    fn test_function_with_let_semicolon() {
+        let funcdef = "fn main() -> void { let x = 2; x }";
+        let result = super::funcdef(funcdef);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
     }
 }

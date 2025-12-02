@@ -79,7 +79,7 @@ impl Display for Expr {
 
 impl Display for FuncDef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}(", self.name)?;
+        write!(f, "fn {}(", self.name)?;
         for (i, arg) in self.args.iter().enumerate() {
             write!(f, "{}", arg.name)?;
             if i != self.args.len() - 1 {
@@ -87,7 +87,7 @@ impl Display for FuncDef {
             }
         }
         write!(f, ") {{\n")?;
-        self.body.fmt_with_binding_strength(f, BindingStrength::AlwaysBracket)?;
+        self.body.fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
         write!(f, "\n}}")
     }
 }
