@@ -19,6 +19,13 @@ enum Z3Value {
 }
 
 #[derive(Clone)]
+struct CheckedFunction {
+    name: String,
+    args: Vec<(String, Type)>,
+    return_type: Type,
+}
+
+#[derive(Clone)]
 struct Env {
     vars: HashMap<String, Type>,
     assumptions: Vec<z3::ast::Bool>,
@@ -160,8 +167,8 @@ impl Env {
         for assumption in &self.assumptions {
             solver.assert(assumption);
         }
-        solver.assert(cond);
-        if solver.check() == z3::SatResult::Unsat {
+        solver.assert(cond.not());
+        if solver.check() != z3::SatResult::Unsat {
             Err(CheckError {
                 message: "Assertion failed".to_owned(),
             })
