@@ -1,4 +1,4 @@
-use nom::{IResult, Parser, branch::alt, bytes::complete::{tag, take_until, take_while, take_while1}, character::complete::{anychar, satisfy}, combinator::{all_consuming, map, opt, recognize, value}, multi::{many0, separated_list0}, sequence::{delimited, pair, preceded, terminated}};
+use nom::{IResult, Parser, branch::alt, bytes::complete::{tag, take_until, take_while, take_while1}, character::complete::{anychar, satisfy}, combinator::{all_consuming, map, opt, recognize, value}, multi::{many0, separated_list0, separated_list1}, sequence::{delimited, pair, preceded, terminated}};
 
 use crate::syntax::ast::*;
 
@@ -7,6 +7,8 @@ enum Word {
     Fn,
     Let,
     Mut,
+    Requires,
+    Ensures,
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -27,6 +29,10 @@ enum Symbol {
     NotEqual,
     PlusAssign,
     MinusAssign,
+    Lt,
+    Le,
+    Gt,
+    Ge,
 }
 
 fn pure_whitespace1(input: &str) -> IResult<&str, &str> {
@@ -71,6 +77,8 @@ fn word(input: &str) -> IResult<&str, Word> {
         "fn" => Word::Fn,
         "let" => Word::Let,
         "mut" => Word::Mut,
+        "requires" => Word::Requires,
+        "ensures" => Word::Ensures,
         _ => Word::Identifier(ident.to_string()),
     };
     Ok((input, word))
@@ -161,6 +169,10 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "==" => Ok((input, Symbol::EqualEqual)),
         "+=" => Ok((input, Symbol::PlusAssign)),
         "-=" => Ok((input, Symbol::MinusAssign)),
+        "<" => Ok((input, Symbol::Lt)),
+        "<=" => Ok((input, Symbol::Le)),
+        ">" => Ok((input, Symbol::Gt)),
+        ">=" => Ok((input, Symbol::Ge)),
         _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char))),
     }
 }
@@ -258,6 +270,10 @@ fn cmpop(input: &str) -> IResult<&str, Symbol> {
     alt((
         symbol(Symbol::EqualEqual),
         symbol(Symbol::NotEqual),
+        symbol(Symbol::Lt),
+        symbol(Symbol::Le),
+        symbol(Symbol::Gt),
+        symbol(Symbol::Ge),
     )).parse(input)
 }
 
@@ -290,20 +306,25 @@ fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
     Ok((inp, exprs))
 }
 
+fn cmpop_to_function_name(op: Symbol) -> &'static str {
+    match op {
+        Symbol::EqualEqual => "==",
+        Symbol::NotEqual => "!=",
+        Symbol::Lt => "<",
+        Symbol::Le => "<=",
+        Symbol::Gt => ">",
+        Symbol::Ge => ">=",
+        _ => unreachable!(),
+    }
+}
+
 fn expr_cmp(input: &str) -> IResult<&str, Expr> {
     let (input, expr) = expr_plusminus(input)?;
     let (input, cmp_opt) = opt(pair(cmpop, expr_plusminus)).parse(input)?;
     match cmp_opt {
-        Some((Symbol::EqualEqual, rhs)) => {
+        Some((sym, rhs)) => {
             let new_expr = Expr::FunctionCall {
-                name: "==".to_owned(),
-                args: vec![expr, rhs],
-            };
-            Ok((input, new_expr))
-        }
-        Some((Symbol::NotEqual, rhs)) => {
-            let new_expr = Expr::FunctionCall {
-                name: "!=".to_owned(),
+                name: cmpop_to_function_name(sym).to_owned(),
                 args: vec![expr, rhs],
             };
             Ok((input, new_expr))
@@ -416,6 +437,14 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         symbol(Symbol::CloseParen)
     ).parse(input)?;
     let (input, return_type) = opt(preceded(symbol(Symbol::Arrow), typ)).parse(input)?;
+    let (input, preconditions) = opt(preceded(
+        keyword(Word::Requires),
+        separated_list1(symbol(Symbol::Comma), expr_comma),
+    )).parse(input)?;
+    let (input, postconditions) = opt(preceded(
+        keyword(Word::Ensures),
+        separated_list1(symbol(Symbol::Comma), expr_comma),
+    )).parse(input)?;
     let (input, body) = delimited(
         symbol(Symbol::OpenBrace),
         expr,
@@ -425,6 +454,8 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         name,
         args,
         return_type: return_type.unwrap_or_else(|| Type { name: "void".to_string() }),
+        preconditions: preconditions.unwrap_or_else(Vec::new),
+        postconditions: postconditions.unwrap_or_else(Vec::new),
         body,
     }))
 }
@@ -440,6 +471,14 @@ pub struct ErrorLocation {
     pub line: usize,
     pub column: usize,
 }
+
+impl std::fmt::Display for ErrorLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Parse error Line {}, Column {}", self.line, self.column)
+    }
+}
+
+impl std::error::Error for ErrorLocation {}
 
 pub fn parse_source_file(input: &str) -> Result<SourceFile, ErrorLocation> {
     match source_file(input) {

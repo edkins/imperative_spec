@@ -14,6 +14,8 @@ pub struct FuncDef {
     pub name: String,
     pub args: Vec<Arg>,
     pub return_type: Type,
+    pub preconditions: Vec<Expr>,
+    pub postconditions: Vec<Expr>,
     pub body: Expr,
 }
 

@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, ffi::NulError, str::FromStr};
+use std::{collections::{HashMap, HashSet}, error::Error, ffi::NulError, fmt::Display, str::FromStr};
 
 use z3;
 use crate::syntax::ast::*;
@@ -8,6 +8,13 @@ use crate::syntax::ast::*;
 pub struct CheckError {
     pub message: String,
 }
+
+impl Display for CheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CheckError: {}", self.message)
+    }
+}
+impl Error for CheckError {}
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -21,8 +28,10 @@ enum Z3Value {
 #[derive(Clone)]
 struct CheckedFunction {
     name: String,
-    args: Vec<(String, Type)>,
+    args: Vec<Arg>,
     return_type: Type,
+    side_effects: HashSet<String>,
+    preconditions: Vec<Expr>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -38,6 +47,14 @@ enum Bounds {
     I64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BareType {
+    Int,
+    Bool,
+    Str,
+    Void,
+}
+
 #[derive(Clone)]
 struct CheckedVar {
     name: String,
@@ -51,10 +68,26 @@ struct Env {
     vars: HashMap<String, CheckedVar>,
     assumptions: Vec<z3::ast::Bool>,
     side_effects: HashSet<String>,
+    other_funcs: Vec<CheckedFunction>,
+}
+
+impl CheckedFunction {
+    fn z3_func_decl(&self) -> Result<z3::FuncDecl, CheckError> {
+        let args = self.args.iter()
+            .map(|arg| arg.arg_type.to_z3_sort())
+            .collect::<Result<Vec<_>, _>>()?;
+        let arg_refs = args.iter().collect::<Vec<&z3::Sort>>();
+        let ret_sort = self.return_type.to_z3_sort()?;
+        Ok(z3::FuncDecl::new(
+            self.name.clone(),
+            &arg_refs,
+            &ret_sort,
+        ))
+    }
 }
 
 impl Bounds {
-    fn applies_to(self, value: Z3Value) -> Result<z3::ast::Bool, CheckError> {
+    fn applies_to(self, value: &Z3Value) -> Result<z3::ast::Bool, CheckError> {
         match (self, value) {
             (Bounds::None, _) => Ok(z3::ast::Bool::from_bool(true)),
             (Bounds::U8, Z3Value::Int(int_ast)) =>
@@ -120,13 +153,41 @@ impl CheckedVar {
     }
 }
 
-impl Z3Value {
-    fn get_type(&self) -> Type {
+impl BareType {
+    fn unbounded(self) -> Type {
         match self {
-            Z3Value::Void => Type { name: "void".to_owned() },
-            Z3Value::Bool(_) => Type { name: "bool".to_owned() },
-            Z3Value::Int(_) => Type { name: "int".to_owned() },
-            Z3Value::Str(_) => Type { name: "str".to_owned() },
+            BareType::Int => Type { name: "int".to_owned() },
+            BareType::Bool => Type { name: "bool".to_owned() },
+            BareType::Str => Type { name: "str".to_owned() },
+            BareType::Void => Type { name: "void".to_owned() },
+        }
+    }
+
+    fn check_z3_dynamic(self, dyn_ast: &z3::ast::Dynamic) -> Result<Z3Value, CheckError> {
+        match self {
+            BareType::Int => Ok(Z3Value::Int(dyn_ast.as_int().ok_or_else(|| CheckError {
+                message: "Expected Int type".to_owned(),
+            })?)),
+            BareType::Bool => Ok(Z3Value::Bool(dyn_ast.as_bool().ok_or_else(|| CheckError {
+                message: "Expected Bool type".to_owned(),
+            })?)),
+            BareType::Str => Ok(Z3Value::Str(dyn_ast.as_string().ok_or_else(|| CheckError {
+                message: "Expected String type".to_owned(),
+            })?)),
+            BareType::Void => Err(CheckError {
+                message: "Void type cannot be converted from Z3 dynamic".to_owned(),
+            }),
+        }
+    }
+}
+
+impl Z3Value {
+    fn get_bare_type(&self) -> BareType {
+        match self {
+            Z3Value::Void => BareType::Void,
+            Z3Value::Bool(_) => BareType::Bool,
+            Z3Value::Int(_) => BareType::Int,
+            Z3Value::Str(_) => BareType::Str,
         }
     }
 
@@ -145,15 +206,17 @@ impl Z3Value {
         self.eq(other).map(|eq_ast| eq_ast.not())
     }
 
-    fn type_check(&self, typ: &Type) -> Result<(), CheckError> {
-        let self_type = self.get_type();
-        if self_type.name == typ.name {
+    fn type_check(&self, typ: &Type, env: &mut Env) -> Result<(), CheckError> {
+        let self_type = self.get_bare_type();
+        let (bt, bounds) = typ.to_bare_type_and_bounds()?;
+        if self_type == bt {
+            env.assert(&bounds.applies_to(&self)?, "Bounds check failed")?;
             Ok(())
         } else {
             Err(CheckError {
                 message: format!(
-                    "Type mismatch: expected {}, got {}",
-                    typ.name, self_type.name
+                    "Type mismatch: expected {}, got {:?}",
+                    typ, self_type
                 ),
             })
         }
@@ -185,6 +248,17 @@ impl Z3Value {
             }),
         }
     }
+
+    fn to_z3_dynamic(&self) -> Result<z3::ast::Dynamic, CheckError> {
+        match self {
+            Z3Value::Bool(b) => Ok(b.clone().into()),
+            Z3Value::Int(i) => Ok(i.clone().into()),
+            Z3Value::Str(s) => Ok(s.clone().into()),
+            Z3Value::Void => Err(CheckError {
+                message: "Void type cannot be converted to Z3 dynamic".to_owned(),
+            }),
+        }
+    }
 }
 
 impl Literal {
@@ -198,20 +272,53 @@ impl Literal {
 }
 
 impl Type {
-    fn to_z3_const(&self, name: &str) -> Result<(Z3Value, Bounds), CheckError> {
+    fn to_bare_type_and_bounds(&self) -> Result<(BareType, Bounds), CheckError> {
         match self.name.as_str() {
-            "u8" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::U8)),
-            "i8" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::I8)),
-            "u16" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::U16)),
-            "i16" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::I16)),
-            "u32" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::U32)),
-            "i32" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::I32)),
-            "u64" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::U64)),
-            "i64" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::I64)),
-            "bool" => Ok((Z3Value::Bool(z3::ast::Bool::new_const(name)), Bounds::None)),
-            "str" => Ok((Z3Value::Str(z3::ast::String::new_const(name)), Bounds::None)),
+            "u8" => Ok((BareType::Int, Bounds::U8)),
+            "i8" => Ok((BareType::Int, Bounds::I8)),
+            "u16" => Ok((BareType::Int, Bounds::U16)),
+            "i16" => Ok((BareType::Int, Bounds::I16)),
+            "u32" => Ok((BareType::Int, Bounds::U32)),
+            "i32" => Ok((BareType::Int, Bounds::I32)),
+            "u64" => Ok((BareType::Int, Bounds::U64)),
+            "i64" => Ok((BareType::Int, Bounds::I64)),
+            "int" => Ok((BareType::Int, Bounds::None)),
+            "bool" => Ok((BareType::Bool, Bounds::None)),
+            "str" => Ok((BareType::Str, Bounds::None)),
+            "void" => Ok((BareType::Void, Bounds::None)),
             _ => Err(CheckError {
-                message: format!("Unsupported type: {}", self.name),
+                message: format!("Unsupported type: {}", self),
+            }),
+        }
+    }
+
+    fn bare_type(&self) -> Result<BareType, CheckError> {
+        Ok(self.to_bare_type_and_bounds()?.0)
+    }
+
+    fn bounds(&self) -> Result<Bounds, CheckError> {
+        Ok(self.to_bare_type_and_bounds()?.1)
+    }
+
+    fn to_z3_sort(&self) -> Result<z3::Sort, CheckError> {
+        match self.bare_type()? {
+            BareType::Int => Ok(z3::Sort::int()),
+            BareType::Bool => Ok(z3::Sort::bool()),
+            BareType::Str => Ok(z3::Sort::string()),
+            _ => Err(CheckError {
+                message: format!("Unsupported type for Z3 sort: {}", self),
+            }),
+        }
+    }
+
+    fn to_z3_const(&self, name: &str) -> Result<(Z3Value, Bounds), CheckError> {
+        let (bt, bounds) = self.to_bare_type_and_bounds()?;
+        match bt {
+            BareType::Int => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), bounds)),
+            BareType::Bool => Ok((Z3Value::Bool(z3::ast::Bool::new_const(name)), bounds)),
+            BareType::Str => Ok((Z3Value::Str(z3::ast::String::new_const(name)), bounds)),
+            _ => Err(CheckError {
+                message: format!("Unsupported bare type: {:?}", bt),
             }),
         }
     }
@@ -236,11 +343,12 @@ impl AssignOp {
 }
 
 impl Env {
-    fn new() -> Self {
+    fn new(other_funcs: &[CheckedFunction]) -> Self {
         Env {
             vars: HashMap::new(),
             assumptions: Vec::new(),
             side_effects: HashSet::new(),
+            other_funcs: other_funcs.to_owned(),
         }
     }
 
@@ -289,6 +397,7 @@ impl Env {
         self.side_effects.insert("print".to_owned());
     }
 
+    #[allow(dead_code)]
     fn mallocs(&mut self) {
         self.side_effects.insert("malloc".to_owned());
     }
@@ -315,7 +424,35 @@ impl Env {
         let new_var = info.z3_const()?;
         let bounds = info.bounds()?;
         self.assume(op.relate(old_var, new_var.clone(), value)?);
-        self.assert(&bounds.applies_to(new_var)?, "Bounds check failed")?;
+        self.assert(&bounds.applies_to(&new_var)?, "Bounds check failed")?;
+        Ok(())
+    }
+
+    fn enter_call_context(&self, func: &CheckedFunction, args: &[Z3Value]) -> Result<Env, CheckError> {
+        let mut new_env = self.clone();
+        if func.args.len() != args.len() {
+            return Err(CheckError {
+                message: format!(
+                    "Function {} expected {} arguments, got {}",
+                    func.name,
+                    func.args.len(),
+                    args.len()
+                ),
+            });
+        }
+        for (arg, value) in func.args.iter().zip(args.iter()) {
+            let (new_var, bounds) = new_env.insert_var(&arg.name, false, &arg.arg_type)?;
+            new_env.assume(new_var.eq(value)?);
+            new_env.assert(&bounds.applies_to(value)?, "Bounds check failed")?;
+        }
+        Ok(new_env)
+    }
+
+    fn check_preconditions(&mut self, func: &CheckedFunction) -> Result<(), CheckError> {
+        for precondition in &func.preconditions {
+            let cond_z3_value = precondition.z3_check(self)?;
+            self.assert(cond_z3_value.bool()?, "Precondition failed")?;
+        }
         Ok(())
     }
 }
@@ -329,17 +466,17 @@ impl Stmt {
             }
             Stmt::Let { name, value } => {
                 let z3_value = value.z3_check(env)?;
-                let var_type = z3_value.get_type();
+                let var_type = z3_value.get_bare_type().unbounded();  // don't record bounds for non-mutable variables
                 let (z3_var, bounds) = env.insert_var(name, false, &var_type)?;
                 env.assume(z3_var.eq(&z3_value)?);
-                env.assert(&bounds.applies_to(z3_value)?, "Bounds check failed")?;
+                env.assert(&bounds.applies_to(&z3_value)?, "Bounds check failed")?;
                 Ok(())
             }
             Stmt::LetMut { name, typ, value } => {
                 let z3_value = value.z3_check(env)?;
                 let (z3_var, bounds) = env.insert_var(name, true, typ)?;
                 env.assume(z3_var.eq(&z3_value)?);
-                env.assert(&bounds.applies_to(z3_value)?, "Bounds check failed")?;
+                env.assert(&bounds.applies_to(&z3_value)?, "Bounds check failed")?;
                 Ok(())
             }
             Stmt::Assign { name, op, value } => {
@@ -360,6 +497,26 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
             let eq_ast = args[0].ne(&args[1])?;
             Ok(Z3Value::Bool(eq_ast))
         }
+        ("<", 2) => {
+            let left_int = args[0].int()?;
+            let right_int = args[1].int()?;
+            Ok(Z3Value::Bool(left_int.lt(right_int)))
+        }
+        ("<=", 2) => {
+            let left_int = args[0].int()?;
+            let right_int = args[1].int()?;
+            Ok(Z3Value::Bool(left_int.le(right_int)))
+        }
+        (">", 2) => {
+            let left_int = args[0].int()?;
+            let right_int = args[1].int()?;
+            Ok(Z3Value::Bool(left_int.gt(right_int)))
+        }
+        (">=", 2) => {
+            let left_int = args[0].int()?;
+            let right_int = args[1].int()?;
+            Ok(Z3Value::Bool(left_int.ge(right_int)))
+        }
         ("+", 2) => {
             Ok(Z3Value::Int(args[0].int()? + args[1].int()?))
         }
@@ -376,9 +533,39 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
             env.prints();
             Ok(Z3Value::Void)
         }
-        _ => Err(CheckError {
-            message: format!("User defined functions not implemented yet: {}", name),
-        }),
+        _ => {
+            if let Some(user_func) = env.other_funcs.iter().find(|f| f.name == name) {
+                let user_func = user_func.clone();  // clone it because we're doing other things to env and they conflict
+                let func_decl = user_func.z3_func_decl()?;
+                let mut call_context = env.enter_call_context(&user_func, args)?;
+                call_context.check_preconditions(&user_func)?;
+                
+                let z3_args = args.iter().map(|arg| arg.to_z3_dynamic()).collect::<Result<Vec<_>, _>>()?;
+                let z3_argrefs = z3_args.iter().map(|a|a as &dyn z3::ast::Ast).collect::<Vec<&dyn z3::ast::Ast>>();
+                let ast = func_decl.apply(&z3_argrefs);
+                let (bt_ret, bounds) = user_func.return_type.to_bare_type_and_bounds()?;
+                let val = bt_ret.check_z3_dynamic(&ast)?;
+                
+                // we can assume the bounds on the return value
+                env.assume(bounds.applies_to(&val)?);
+                // we can also assume the postconditions
+                for postcondition in &user_func.preconditions {
+                    let cond_z3_value = postcondition.z3_check(&mut call_context)?;
+                    env.assume(cond_z3_value.bool()?.clone());
+                }
+
+                // don't forget the side effects
+                for effect in &user_func.side_effects {
+                    env.side_effects.insert(effect.clone());
+                }
+
+                Ok(val)
+            } else {
+                Err(CheckError {
+                    message: format!("Undefined function: {}", name),
+                })
+            }
+        },
     }
 }
 
@@ -403,21 +590,41 @@ impl Expr {
     }
 }
 
-fn z3_check_funcdef(func: &FuncDef) -> Result<(), CheckError> {
-    let mut env = Env::new();
+fn z3_check_funcdef(func: &FuncDef, other_funcs: &[CheckedFunction]) -> Result<CheckedFunction, CheckError> {
+    let mut env = Env::new(other_funcs);
     for arg in &func.args {
         env.insert_var(&arg.name, false, &arg.arg_type)?;
+        env.assume(arg.arg_type.bounds()?.applies_to(&env.get_var(&arg.name)?)?);
+    }
+    for precondition in &func.preconditions {
+        let cond_z3_value = precondition.z3_check(&mut env)?;
+        env.assume(cond_z3_value.bool()?.clone());
     }
     let body_z3_value = func.body.z3_check(&mut env)?;
-    body_z3_value.type_check(&func.return_type)?;
+    body_z3_value.type_check(&func.return_type, &mut env)?;
+
+    // now assert all the postconditions
+    for postcondition in &func.postconditions {
+        let cond_z3_value = postcondition.z3_check(&mut env)?;
+        env.assert(cond_z3_value.bool()?, "Postcondition failed")?;
+    }
+
     println!("Checked function: {}", func.name);
     env.print_side_effects();
-    Ok(())
+    Ok(CheckedFunction {
+        name: func.name.clone(),
+        args: func.args.clone(),
+        return_type: func.return_type.clone(),
+        side_effects: env.side_effects,
+        preconditions: func.preconditions.clone(),
+    })
 }
 
 pub fn z3_check(source_file: &SourceFile) -> Result<(), CheckError> {
+    let mut other_funcs = vec![];
     for func in &source_file.functions {
-        z3_check_funcdef(func)?;
+        let checked_func = z3_check_funcdef(func, &other_funcs)?;
+        other_funcs.push(checked_func);
     }
     Ok(())
 }

@@ -1,0 +1,10 @@
+fn other(x: u64) -> u64
+    requires x < 4
+{
+    x + x
+}
+
+fn main() {
+    let y = other(3);
+    println("done")
+}

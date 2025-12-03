@@ -159,6 +159,8 @@ mod test {
                     arg_type: Type { name: "i32".to_owned() },
                 },
             ],
+            preconditions: vec![],
+            postconditions: vec![],
             return_type: Type { name: "i32".to_owned() },
             body: Expr::FunctionCall {
                 name: "sum".to_owned(),
@@ -197,6 +199,8 @@ mod test {
                 },
             ],
             return_type: Type { name: "i32".to_owned() },
+            preconditions: vec![],
+            postconditions: vec![],
             body: Expr::FunctionCall {
                 name: "process".to_owned(),
                 args: vec![
