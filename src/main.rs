@@ -10,37 +10,63 @@ struct Args {
     input_file: String,
 }
 
-fn check_dir(dir: &str) -> Result<(), Box<dyn std::error::Error>> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+fn check_dir(dir: &str) {
+    let mut skip = false;
+    let mut success = true;
+    for entry in std::fs::read_dir(dir).expect("Failed to read directory") {
+        let entry = entry.expect("Failed to read directory entry");
         let path = entry.path();
         if path.is_file() {
-            let input = std::fs::read_to_string(&path)?;
+            let input = std::fs::read_to_string(&path).expect("Failed to read file");
             println!("Checking file: {}", path.display());
-            let source_file = syntax::parse::parse_source_file(&input)?;
+            let source_file = syntax::parse::parse_source_file(&input);
+            if source_file.is_err() {
+                println!("❌  Failed to parse file: {}", path.display());
+                success = false;
+                println!();
+                continue;
+            }
+            let source_file = source_file.unwrap();
             let p = std::path::Path::new(&path);
             if p.file_name().unwrap().to_str().unwrap().ends_with(".zzz") {
-                println!("  Skipping .zzz file");
+                println!("⬇️  Skipping .zzz file");
+                skip = true;
+                println!();
                 continue;
             }
             if p.file_name().unwrap().to_str().unwrap().starts_with("f_") {
                 match check::z3check::z3_check(&source_file) {
                     Ok(_) => {
-                        return Err(Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("Expected check to fail for file: {}", path.display()),
-                        )));
+                        println!("❌  Check unexpectedly succeeded");
+                        success = false;
                     }
-                    Err(e) => {
-                        println!("  Check failed as expected: {}", e);
+                    Err(_) => {
+                        println!("✅  Check failed as expected");
                     }
                 }
             } else {
-                check::z3check::z3_check(&source_file)?;
+                match check::z3check::z3_check(&source_file) {
+                    Err(e) => {
+                        println!("❌  Check failed: {}", e);
+                        success = false;
+                    }
+                    Ok(_) => {
+                        println!("✅  Check succeeded");
+                    }
+                }
             }
+            println!();
         }
     }
-    Ok(())
+    if success {
+        if skip {
+            println!("⚠️  Some files were skipped");
+        } else {
+            println!("✅✅✅ All checks passed");
+        }
+    } else {
+        println!("❌❌❌ Some checks failed");
+    }
 }
 
 fn main() {
@@ -50,7 +76,7 @@ fn main() {
         .expect("Failed to get metadata")
         .is_dir()
     {
-        check_dir(&args.input_file).expect("Failed to check directory");
+        check_dir(&args.input_file);
         return;
     }
 

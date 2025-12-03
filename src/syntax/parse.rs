@@ -17,6 +17,7 @@ enum Word {
     Mut,
     Requires,
     Ensures,
+    Sees,
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -86,6 +87,7 @@ fn word(input: &str) -> IResult<&str, Word> {
         "mut" => Word::Mut,
         "requires" => Word::Requires,
         "ensures" => Word::Ensures,
+        "sees" => Word::Sees,
         _ => Word::Identifier(ident.to_string()),
     };
     Ok((input, word))
@@ -175,10 +177,7 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
 }
 
 fn is_multi_char_sym(ch: char) -> bool {
-    match ch {
-        ':' | '=' | '+' | '-' | '<' | '>' | '!' => true,
-        _ => false,
-    }
+    matches!(ch, ':' | '=' | '+' | '-' | '<' | '>' | '!')
 }
 
 fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
@@ -366,7 +365,6 @@ fn expr_cmp(input: &str) -> IResult<&str, Expr> {
             Ok((input, new_expr))
         }
         None => Ok((input, expr)),
-        _ => unreachable!(),
     }
 }
 
@@ -405,7 +403,7 @@ fn stmt_let(input: &str) -> IResult<&str, Stmt> {
         let (input, typ) = preceded(symbol(Symbol::Colon), typ).parse(input)?;
         let (input, _) = symbol(Symbol::Assign)(input)?;
         let (input, value) = expr_comma(input)?;
-        return Ok((input, Stmt::LetMut { name, typ, value }));
+        Ok((input, Stmt::LetMut { name, typ, value }))
     } else {
         let (input, _) = symbol(Symbol::Assign)(input)?;
         let (input, value) = expr_comma(input)?;
@@ -489,6 +487,12 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         separated_list1(symbol(Symbol::Comma), expr_comma),
     ))
     .parse(input)?;
+    let (input, sees) = opt(preceded(
+        keyword(Word::Sees),
+        separated_list1(symbol(Symbol::Comma), identifier),
+    ))
+    .parse(input)?;
+
     let (input, body) =
         delimited(symbol(Symbol::OpenBrace), expr, symbol(Symbol::CloseBrace)).parse(input)?;
 
@@ -509,6 +513,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
             args,
             return_name,
             return_type,
+            sees: sees.unwrap_or_else(Vec::new),
             preconditions: preconditions.unwrap_or_else(Vec::new),
             postconditions: postconditions.unwrap_or_else(Vec::new),
             body,

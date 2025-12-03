@@ -17,6 +17,7 @@ pub struct FuncDef {
     pub return_type: Type,
     pub preconditions: Vec<Expr>,
     pub postconditions: Vec<Expr>,
+    pub sees: Vec<String>,
     pub body: Expr,
 }
 

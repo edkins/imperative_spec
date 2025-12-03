@@ -64,7 +64,7 @@ impl Expr {
         match self {
             Expr::Literal(literal) => write!(f, "{}", literal),
             Expr::Variable(x) => write!(f, "{}", x),
-            Expr::FunctionCall { name, args } => match &name as &str {
+            Expr::FunctionCall { name, args } => match name as &str {
                 "==" | "!=" | "<" | "<=" | ">" | ">=" => {
                     strength.open_brace(f, BindingStrength::Comparison)?;
                     args[0].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
@@ -93,7 +93,7 @@ impl Expr {
             Expr::Semicolon(stmt, expr) => {
                 strength.open_brace(f, BindingStrength::Semicolon)?;
                 stmt.fmt(f)?;
-                write!(f, ";\n")?;
+                writeln!(f, ";")?;
                 expr.fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
                 strength.close_brace(f, BindingStrength::Semicolon)
             }
@@ -117,10 +117,41 @@ impl Display for FuncDef {
             }
         }
         if let Some(return_name) = &self.return_name {
-            write!(f, ") -> ({}:{}) {{\n", return_name, self.return_type)?;
+            writeln!(f, ") -> ({}:{})", return_name, self.return_type)?;
         } else {
-            write!(f, ") -> {} {{\n", self.return_type)?;
+            writeln!(f, ") -> {}", self.return_type)?;
         }
+        if !self.preconditions.is_empty() {
+            write!(f, "requires ")?;
+            for (i, precond) in self.preconditions.iter().enumerate() {
+                precond.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                if i != self.preconditions.len() - 1 {
+                    write!(f, ", ")?;
+                }
+            }
+            writeln!(f)?;
+        }
+        if !self.postconditions.is_empty() {
+            write!(f, "ensures ")?;
+            for (i, postcond) in self.postconditions.iter().enumerate() {
+                postcond.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                if i != self.postconditions.len() - 1 {
+                    write!(f, ", ")?;
+                }
+            }
+            writeln!(f)?;
+        }
+        if !self.sees.is_empty() {
+            write!(f, "sees ")?;
+            for (i, module) in self.sees.iter().enumerate() {
+                write!(f, "{}", module)?;
+                if i != self.sees.len() - 1 {
+                    write!(f, ", ")?;
+                }
+            }
+            writeln!(f)?;
+        }
+        writeln!(f, "{{")?;
         self.body
             .fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
         write!(f, "\n}}")
@@ -151,7 +182,7 @@ impl Display for Stmt {
 impl Display for SourceFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for func in &self.functions {
-            write!(f, "{}\n", func)?;
+            writeln!(f, "{}", func)?;
         }
         Ok(())
     }
@@ -181,6 +212,7 @@ mod test {
             ],
             preconditions: vec![],
             postconditions: vec![],
+            sees: vec![],
             return_name: None,
             return_type: Type {
                 name: "i32".to_owned(),
@@ -228,6 +260,7 @@ mod test {
             },
             preconditions: vec![],
             postconditions: vec![],
+            sees: vec![],
             return_name: None,
             body: Expr::FunctionCall {
                 name: "process".to_owned(),

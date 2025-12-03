@@ -99,26 +99,26 @@ impl Bounds {
         match (self, value) {
             (Bounds::None, _) => Ok(z3::ast::Bool::from_bool(true)),
             (Bounds::U8, Z3Value::Int(int_ast)) => Ok(
-                int_ast.ge(z3::ast::Int::from_u64(0)) & int_ast.le(&z3::ast::Int::from_u64(255))
+                int_ast.ge(z3::ast::Int::from_u64(0)) & int_ast.le(z3::ast::Int::from_u64(255))
             ),
-            (Bounds::I8, Z3Value::Int(int_ast)) => Ok(int_ast.ge(&z3::ast::Int::from_i64(-128))
-                & int_ast.le(&z3::ast::Int::from_i64(127))),
+            (Bounds::I8, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_i64(-128))
+                & int_ast.le(z3::ast::Int::from_i64(127))),
             (Bounds::U16, Z3Value::Int(int_ast)) => {
-                Ok(int_ast.ge(&z3::ast::Int::from_u64(0))
-                    & int_ast.le(&z3::ast::Int::from_u64(65535)))
+                Ok(int_ast.ge(z3::ast::Int::from_u64(0))
+                    & int_ast.le(z3::ast::Int::from_u64(65535)))
             }
-            (Bounds::I16, Z3Value::Int(int_ast)) => Ok(int_ast.ge(&z3::ast::Int::from_i64(-32768))
-                & int_ast.le(&z3::ast::Int::from_i64(32767))),
-            (Bounds::U32, Z3Value::Int(int_ast)) => Ok(int_ast.ge(&z3::ast::Int::from_u64(0))
-                & int_ast.le(&z3::ast::Int::from_u64(4294967295))),
+            (Bounds::I16, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_i64(-32768))
+                & int_ast.le(z3::ast::Int::from_i64(32767))),
+            (Bounds::U32, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_u64(0))
+                & int_ast.le(z3::ast::Int::from_u64(4294967295))),
             (Bounds::I32, Z3Value::Int(int_ast)) => Ok(int_ast
-                .ge(&z3::ast::Int::from_i64(-2147483648))
-                & int_ast.le(&z3::ast::Int::from_i64(2147483647))),
-            (Bounds::U64, Z3Value::Int(int_ast)) => Ok(int_ast.ge(&z3::ast::Int::from_u64(0))
-                & int_ast.le(&z3::ast::Int::from_u64(18446744073709551615))),
+                .ge(z3::ast::Int::from_i64(-2147483648))
+                & int_ast.le(z3::ast::Int::from_i64(2147483647))),
+            (Bounds::U64, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_u64(0))
+                & int_ast.le(z3::ast::Int::from_u64(18446744073709551615))),
             (Bounds::I64, Z3Value::Int(int_ast)) => Ok(int_ast
-                .ge(&z3::ast::Int::from_i64(-9223372036854775808))
-                & int_ast.le(&z3::ast::Int::from_i64(9223372036854775807))),
+                .ge(z3::ast::Int::from_i64(-9223372036854775808))
+                & int_ast.le(z3::ast::Int::from_i64(9223372036854775807))),
             _ => Err(CheckError {
                 message: "Bounds can't be applied to this type".to_owned(),
             }),
@@ -137,9 +137,9 @@ impl From<NulError> for CheckError {
 impl CheckedVar {
     fn z3_name(&self) -> Result<String, CheckError> {
         if self.hidden {
-            return Err(CheckError {
+            Err(CheckError {
                 message: "Variable is out of scope".to_owned(),
-            });
+            })
         } else if self.mutable || self.version > 0 {
             Ok(format!("{}:{}", self.name, self.version))
         } else {
@@ -243,7 +243,7 @@ impl Z3Value {
         let self_type = self.get_bare_type();
         let (bt, bounds) = typ.to_bare_type_and_bounds()?;
         if self_type == bt {
-            env.assert(&bounds.applies_to(&self)?, "Bounds check failed")?;
+            env.assert(&bounds.applies_to(self)?, "Bounds check failed")?;
             Ok(())
         } else {
             Err(CheckError {
@@ -474,7 +474,8 @@ impl Env {
 
     fn fold_in_scope(&mut self, other: &Env) {
         for (name, other_var) in &other.vars {
-            self.vars.entry(name.clone())
+            self.vars
+                .entry(name.clone())
                 .and_modify(|var| {
                     assert!(other_var.version >= var.version);
                     var.version = other_var.version;
@@ -618,8 +619,10 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
                     .collect::<Vec<&dyn z3::ast::Ast>>();
 
                 let (bt_ret, bounds) = user_func.return_type.to_bare_type_and_bounds()?;
-                let retvar = call_env.insert_var(&user_func.return_value, false, &user_func.return_type)?.0;
-                
+                let retvar = call_env
+                    .insert_var(&user_func.return_value, false, &user_func.return_type)?
+                    .0;
+
                 // we can assume the bounds on the return value
                 call_env.assume(bounds.applies_to(&retvar)?);
                 // we can also assume the postconditions
@@ -692,7 +695,7 @@ fn z3_check_funcdef(
     body_z3_value.type_check(&func.return_type, &mut env)?;
 
     // now check all the postconditions
-    if func.postconditions.len() > 0 {
+    if !func.postconditions.is_empty() {
         if let Some(ret) = &func.return_name {
             let ret_var = env.insert_var(ret, false, &func.return_type)?.0;
             env.assume(ret_var.eq(&body_z3_value)?);
@@ -713,7 +716,10 @@ fn z3_check_funcdef(
         name: func.name.clone(),
         args: func.args.clone(),
         return_type: func.return_type.clone(),
-        return_value: func.return_name.clone().unwrap_or_else(|| "__ret__".to_owned()),
+        return_value: func
+            .return_name
+            .clone()
+            .unwrap_or_else(|| "__ret__".to_owned()),
         side_effects: env.side_effects,
         preconditions: func.preconditions.clone(),
         postconditions: func.postconditions.clone(),
