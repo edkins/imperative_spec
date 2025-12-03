@@ -428,6 +428,24 @@ fn arg(input: &str) -> IResult<&str, Arg> {
     }))
 }
 
+fn named_ret(input: &str) -> IResult<&str, (Option<String>, Type)> {
+    let (input, _) = symbol(Symbol::OpenParen)(input)?;
+    let (input, return_name) = identifier(input)?;
+    let (input, _) = symbol(Symbol::Colon)(input)?;
+    let (input, return_type) = typ(input)?;
+    let (input, _) = symbol(Symbol::CloseParen)(input)?;
+    Ok((input, (Some(return_name), return_type)))
+}
+
+fn unnamed_ret(input: &str) -> IResult<&str, (Option<String>, Type)> {
+    let (input, return_type) = typ(input)?;
+    Ok((input, (None, return_type)))
+}
+
+fn ret(input: &str) -> IResult<&str, (Option<String>, Type)> {
+    alt((named_ret, unnamed_ret)).parse(input)
+}
+
 fn funcdef(input: &str) -> IResult<&str, FuncDef> {
     let (input, _) = keyword(Word::Fn)(input)?;
     let (input, name) = identifier(input)?;
@@ -436,7 +454,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         separated_list0(symbol(Symbol::Comma), arg),
         symbol(Symbol::CloseParen)
     ).parse(input)?;
-    let (input, return_type) = opt(preceded(symbol(Symbol::Arrow), typ)).parse(input)?;
+    let (input, return_stuff) = opt(preceded(symbol(Symbol::Arrow), ret)).parse(input)?;
     let (input, preconditions) = opt(preceded(
         keyword(Word::Requires),
         separated_list1(symbol(Symbol::Comma), expr_comma),
@@ -450,10 +468,17 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         expr,
         symbol(Symbol::CloseBrace)
     ).parse(input)?;
+
+    let (return_name, return_type) = match return_stuff {
+        Some((rn, rt)) => (rn, rt),
+        None => (None, Type { name: "void".to_string() }),
+    };
+
     Ok((input, FuncDef {
         name,
         args,
-        return_type: return_type.unwrap_or_else(|| Type { name: "void".to_string() }),
+        return_name,
+        return_type,
         preconditions: preconditions.unwrap_or_else(Vec::new),
         postconditions: postconditions.unwrap_or_else(Vec::new),
         body,

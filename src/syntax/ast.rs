@@ -13,6 +13,7 @@ pub struct Arg {
 pub struct FuncDef {
     pub name: String,
     pub args: Vec<Arg>,
+    pub return_name: Option<String>,
     pub return_type: Type,
     pub preconditions: Vec<Expr>,
     pub postconditions: Vec<Expr>,

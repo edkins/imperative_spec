@@ -603,10 +603,20 @@ fn z3_check_funcdef(func: &FuncDef, other_funcs: &[CheckedFunction]) -> Result<C
     let body_z3_value = func.body.z3_check(&mut env)?;
     body_z3_value.type_check(&func.return_type, &mut env)?;
 
-    // now assert all the postconditions
-    for postcondition in &func.postconditions {
-        let cond_z3_value = postcondition.z3_check(&mut env)?;
-        env.assert(cond_z3_value.bool()?, "Postcondition failed")?;
+    // now check all the postconditions
+    if func.postconditions.len() > 0 {
+        if let Some(ret) = &func.return_name {
+            let ret_var = env.insert_var(ret, false, &func.return_type)?.0;
+            env.assume(ret_var.eq(&body_z3_value)?);
+            for postcondition in &func.postconditions {
+                let cond_z3_value = postcondition.z3_check(&mut env)?;
+                env.assert(cond_z3_value.bool()?, "Postcondition failed")?;
+            }
+        } else {
+            return Err(CheckError {
+                message: "Postconditions specified but no return variable name provided".to_owned(),
+            });
+        }
     }
 
     println!("Checked function: {}", func.name);

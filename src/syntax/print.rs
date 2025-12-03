@@ -107,7 +107,11 @@ impl Display for FuncDef {
                 write!(f, ", ")?;
             }
         }
-        write!(f, ") -> {} {{\n", self.return_type)?;
+        if let Some(return_name) = &self.return_name {
+            write!(f, ") -> ({}:{}) {{\n", return_name, self.return_type)?;
+        } else {
+            write!(f, ") -> {} {{\n", self.return_type)?;
+        }
         self.body.fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
         write!(f, "\n}}")
     }
@@ -161,6 +165,7 @@ mod test {
             ],
             preconditions: vec![],
             postconditions: vec![],
+            return_name: None,
             return_type: Type { name: "i32".to_owned() },
             body: Expr::FunctionCall {
                 name: "sum".to_owned(),
@@ -201,6 +206,7 @@ mod test {
             return_type: Type { name: "i32".to_owned() },
             preconditions: vec![],
             postconditions: vec![],
+            return_name: None,
             body: Expr::FunctionCall {
                 name: "process".to_owned(),
                 args: vec![
