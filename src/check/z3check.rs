@@ -9,7 +9,6 @@ use std::{
 use crate::syntax::ast::*;
 use z3;
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct CheckError {
     pub message: String,
@@ -22,7 +21,6 @@ impl Display for CheckError {
 }
 impl Error for CheckError {}
 
-#[allow(dead_code)]
 #[derive(Clone)]
 enum Z3Value {
     Void,
@@ -476,8 +474,9 @@ impl Env {
         let mut effects: Vec<_> = self.side_effects.iter().collect();
         effects.sort();
         for effect in &effects {
-            println!("Side effect: {}", effect);
+            print!(" {{{}}}", effect);
         }
+        println!();
     }
 
     fn assign(&mut self, var: &str, op: AssignOp, value: Z3Value) -> Result<(), CheckError> {
@@ -539,6 +538,12 @@ impl Env {
                 ),
             });
         }
+
+        // hide all outside variables
+        for var in new_env.vars.values_mut() {
+            var.hidden = true;
+        }
+
         for (arg, value) in func.args.iter().zip(args.iter()) {
             let (new_var, bounds) = new_env.insert_var(&arg.name, false, &arg.arg_type)?;
             new_env.assume(new_var.eq(value)?);
@@ -661,6 +666,12 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
                     call_env.side_effects.insert(effect.clone());
                 }
 
+                // If body is visible, check it (which will add relevant assumptions)
+                if let Some(body) = &user_func.body {
+                    let body_z3_value = body.z3_check(&mut call_env)?;
+                    env.assume(retvar.eq(&body_z3_value)?);
+                }
+
                 // fold back into main env
                 env.fold_in_scope(&call_env);
 
@@ -736,7 +747,7 @@ fn z3_check_funcdef(
         }
     }
 
-    println!("Checked function: {}", func.name);
+    print!("Checked function: {}", func.name);
     env.print_side_effects();
     Ok(CheckedFunction {
         name: func.name.clone(),

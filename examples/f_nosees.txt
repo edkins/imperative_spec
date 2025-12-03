@@ -1,0 +1,12 @@
+fn other(x: u64) -> (res:u64)
+    requires x < 4
+{
+    x + x
+}
+
+fn main()
+{
+    let y = other(3);
+    assert(y == 6);
+    println("done")
+}

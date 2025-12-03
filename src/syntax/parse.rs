@@ -526,7 +526,6 @@ fn source_file(input: &str) -> IResult<&str, SourceFile> {
     Ok((input, SourceFile { functions }))
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ErrorLocation {
     pub line: usize,
