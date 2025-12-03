@@ -40,6 +40,7 @@ struct CheckedFunction {
     side_effects: HashSet<String>,
     preconditions: Vec<Expr>,
     postconditions: Vec<Expr>,
+    body: Option<Expr>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -92,17 +93,37 @@ impl CheckedFunction {
         let ret_sort = self.return_type.to_z3_sort()?;
         Ok(z3::FuncDecl::new(self.name.clone(), &arg_refs, &ret_sort))
     }
+
+    fn with_visibility(&self, sees: &[String]) -> CheckedFunction {
+        let body = if sees.contains(&self.name) {
+            self.body.clone()
+        } else {
+            None
+        };
+        CheckedFunction {
+            name: self.name.clone(),
+            args: self.args.clone(),
+            return_type: self.return_type.clone(),
+            return_value: self.return_value.clone(),
+            side_effects: self.side_effects.clone(),
+            preconditions: self.preconditions.clone(),
+            postconditions: self.postconditions.clone(),
+            body,
+        }
+    }
 }
 
 impl Bounds {
     fn applies_to(self, value: &Z3Value) -> Result<z3::ast::Bool, CheckError> {
         match (self, value) {
             (Bounds::None, _) => Ok(z3::ast::Bool::from_bool(true)),
-            (Bounds::U8, Z3Value::Int(int_ast)) => Ok(
-                int_ast.ge(z3::ast::Int::from_u64(0)) & int_ast.le(z3::ast::Int::from_u64(255))
-            ),
-            (Bounds::I8, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_i64(-128))
-                & int_ast.le(z3::ast::Int::from_i64(127))),
+            (Bounds::U8, Z3Value::Int(int_ast)) => {
+                Ok(int_ast.ge(z3::ast::Int::from_u64(0)) & int_ast.le(z3::ast::Int::from_u64(255)))
+            }
+            (Bounds::I8, Z3Value::Int(int_ast)) => {
+                Ok(int_ast.ge(z3::ast::Int::from_i64(-128))
+                    & int_ast.le(z3::ast::Int::from_i64(127)))
+            }
             (Bounds::U16, Z3Value::Int(int_ast)) => {
                 Ok(int_ast.ge(z3::ast::Int::from_u64(0))
                     & int_ast.le(z3::ast::Int::from_u64(65535)))
@@ -378,12 +399,17 @@ impl AssignOp {
 }
 
 impl Env {
-    fn new(other_funcs: &[CheckedFunction]) -> Self {
+    fn new(other_funcs: &[CheckedFunction], sees: &[String]) -> Self {
+        let mut other_funcs_visible = Vec::new();
+        for func in other_funcs {
+            // Hide the body of functions not in 'sees'
+            other_funcs_visible.push(func.with_visibility(sees));
+        }
         Env {
             vars: HashMap::new(),
             assumptions: Vec::new(),
             side_effects: HashSet::new(),
-            other_funcs: other_funcs.to_owned(),
+            other_funcs: other_funcs_visible,
         }
     }
 
@@ -678,7 +704,7 @@ fn z3_check_funcdef(
     func: &FuncDef,
     other_funcs: &[CheckedFunction],
 ) -> Result<CheckedFunction, CheckError> {
-    let mut env = Env::new(other_funcs);
+    let mut env = Env::new(other_funcs, &func.sees);
     for arg in &func.args {
         env.insert_var(&arg.name, false, &arg.arg_type)?;
         env.assume(
@@ -723,6 +749,7 @@ fn z3_check_funcdef(
         side_effects: env.side_effects,
         preconditions: func.preconditions.clone(),
         postconditions: func.postconditions.clone(),
+        body: Some(func.body.clone()),
     })
 }
 
