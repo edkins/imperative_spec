@@ -36,8 +36,10 @@ struct CheckedFunction {
     name: String,
     args: Vec<Arg>,
     return_type: Type,
+    return_value: String,
     side_effects: HashSet<String>,
     preconditions: Vec<Expr>,
+    postconditions: Vec<Expr>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -65,7 +67,9 @@ enum BareType {
 struct CheckedVar {
     name: String,
     version: usize,
+    max_version: usize,
     mutable: bool,
+    hidden: bool,
     var_type: Type,
 }
 
@@ -131,16 +135,20 @@ impl From<NulError> for CheckError {
 }
 
 impl CheckedVar {
-    fn z3_name(&self) -> String {
-        if self.mutable || self.version > 0 {
-            format!("{}:{}", self.name, self.version)
+    fn z3_name(&self) -> Result<String, CheckError> {
+        if self.hidden {
+            return Err(CheckError {
+                message: "Variable is out of scope".to_owned(),
+            });
+        } else if self.mutable || self.version > 0 {
+            Ok(format!("{}:{}", self.name, self.version))
         } else {
-            self.name.clone()
+            Ok(self.name.clone())
         }
     }
 
     fn z3_const_and_bounds(&self) -> Result<(Z3Value, Bounds), CheckError> {
-        self.var_type.to_z3_const(&self.z3_name())
+        self.var_type.to_z3_const(&self.z3_name()?)
     }
 
     fn z3_const(&self) -> Result<Z3Value, CheckError> {
@@ -152,11 +160,13 @@ impl CheckedVar {
     }
 
     fn mutate(&mut self) {
-        self.version += 1;
+        self.max_version += 1;
+        self.version = self.max_version;
     }
 
     fn replace(&mut self, mutable: bool, typ: &Type) {
-        self.version += 1;
+        self.max_version += 1;
+        self.version = self.max_version;
         self.mutable = mutable;
         self.var_type = typ.clone();
     }
@@ -399,6 +409,8 @@ impl Env {
             .or_insert_with(|| CheckedVar {
                 name: name.to_owned(),
                 version: 0,
+                max_version: 0,
+                hidden: false,
                 mutable,
                 var_type: ty.clone(),
             })
@@ -417,7 +429,7 @@ impl Env {
         solver.assert(cond.not());
         if solver.check() != z3::SatResult::Unsat {
             Err(CheckError {
-                message: message.to_owned(),
+                message: format!("{}: {}", message, cond),
             })
         } else {
             self.assumptions.push(cond.clone());
@@ -460,7 +472,31 @@ impl Env {
         Ok(())
     }
 
-    fn enter_call_context(
+    fn fold_in_scope(&mut self, other: &Env) {
+        for (name, other_var) in &other.vars {
+            self.vars.entry(name.clone())
+                .and_modify(|var| {
+                    assert!(other_var.version >= var.version);
+                    var.version = other_var.version;
+                })
+                .or_insert_with(|| {
+                    let mut other_clone = other_var.clone();
+                    other_clone.hidden = true;
+                    other_clone
+                });
+        }
+        for effect in &other.side_effects {
+            self.side_effects.insert(effect.clone());
+        }
+
+        for assumption in &other.assumptions {
+            if !self.assumptions.contains(assumption) {
+                self.assumptions.push(assumption.clone());
+            }
+        }
+    }
+
+    fn enter_call_scope(
         &self,
         func: &CheckedFunction,
         args: &[Z3Value],
@@ -569,8 +605,8 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
             if let Some(user_func) = env.other_funcs.iter().find(|f| f.name == name) {
                 let user_func = user_func.clone(); // clone it because we're doing other things to env and they conflict
                 let func_decl = user_func.z3_func_decl()?;
-                let mut call_context = env.enter_call_context(&user_func, args)?;
-                call_context.check_preconditions(&user_func)?;
+                let mut call_env = env.enter_call_scope(&user_func, args)?;
+                call_env.check_preconditions(&user_func)?;
 
                 let z3_args = args
                     .iter()
@@ -580,22 +616,29 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
                     .iter()
                     .map(|a| a as &dyn z3::ast::Ast)
                     .collect::<Vec<&dyn z3::ast::Ast>>();
-                let ast = func_decl.apply(&z3_argrefs);
+
                 let (bt_ret, bounds) = user_func.return_type.to_bare_type_and_bounds()?;
-                let val = bt_ret.check_z3_dynamic(&ast)?;
-
+                let retvar = call_env.insert_var(&user_func.return_value, false, &user_func.return_type)?.0;
+                
                 // we can assume the bounds on the return value
-                env.assume(bounds.applies_to(&val)?);
+                call_env.assume(bounds.applies_to(&retvar)?);
                 // we can also assume the postconditions
-                for postcondition in &user_func.preconditions {
-                    let cond_z3_value = postcondition.z3_check(&mut call_context)?;
-                    env.assume(cond_z3_value.bool()?.clone());
+                for postcondition in &user_func.postconditions {
+                    let cond_z3_value = postcondition.z3_check(&mut call_env)?;
+                    call_env.assume(cond_z3_value.bool()?.clone());
                 }
-
                 // don't forget the side effects
                 for effect in &user_func.side_effects {
-                    env.side_effects.insert(effect.clone());
+                    call_env.side_effects.insert(effect.clone());
                 }
+
+                // fold back into main env
+                env.fold_in_scope(&call_env);
+
+                // unify return value with function call
+                let ast = func_decl.apply(&z3_argrefs);
+                let val = bt_ret.check_z3_dynamic(&ast)?;
+                env.assume(retvar.eq(&val)?);
 
                 Ok(val)
             } else {
@@ -670,8 +713,10 @@ fn z3_check_funcdef(
         name: func.name.clone(),
         args: func.args.clone(),
         return_type: func.return_type.clone(),
+        return_value: func.return_name.clone().unwrap_or_else(|| "__ret__".to_owned()),
         side_effects: env.side_effects,
         preconditions: func.preconditions.clone(),
+        postconditions: func.postconditions.clone(),
     })
 }
 
