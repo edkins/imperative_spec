@@ -35,11 +35,28 @@ pub enum Expr {
     },
 }
 
+#[derive(Clone, Copy)]
+pub enum AssignOp {
+    Assign,
+    PlusAssign,
+    MinusAssign,
+}
+
 #[derive(Clone)]
 pub enum Stmt {
     Expr(Expr),
     Let {
         name: String,
+        value: Expr,
+    },
+    LetMut {
+        name: String,
+        typ: Type,
+        value: Expr,
+    },
+    Assign {
+        name: String,
+        op: AssignOp,
         value: Expr,
     },
 }

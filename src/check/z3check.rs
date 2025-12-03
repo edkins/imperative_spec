@@ -25,11 +25,59 @@ struct CheckedFunction {
     return_type: Type,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Bounds {
+    None,
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    U64,
+    I64,
+}
+
+#[derive(Clone)]
+struct CheckedVar {
+    name: String,
+    version: usize,
+    mutable: bool,
+    var_type: Type,
+}
+
 #[derive(Clone)]
 struct Env {
-    vars: HashMap<String, Type>,
+    vars: HashMap<String, CheckedVar>,
     assumptions: Vec<z3::ast::Bool>,
     side_effects: HashSet<String>,
+}
+
+impl Bounds {
+    fn applies_to(self, value: Z3Value) -> Result<z3::ast::Bool, CheckError> {
+        match (self, value) {
+            (Bounds::None, _) => Ok(z3::ast::Bool::from_bool(true)),
+            (Bounds::U8, Z3Value::Int(int_ast)) =>
+                Ok(int_ast.ge(z3::ast::Int::from_u64(0)) & int_ast.le(&z3::ast::Int::from_u64(255))),
+            (Bounds::I8, Z3Value::Int(int_ast)) =>
+                Ok(int_ast.ge(&z3::ast::Int::from_i64(-128)) & int_ast.le(&z3::ast::Int::from_i64(127))),
+            (Bounds::U16, Z3Value::Int(int_ast)) =>
+                Ok(int_ast.ge(&z3::ast::Int::from_u64(0)) & int_ast.le(&z3::ast::Int::from_u64(65535))),
+            (Bounds::I16, Z3Value::Int(int_ast)) =>
+                Ok(int_ast.ge(&z3::ast::Int::from_i64(-32768)) & int_ast.le(&z3::ast::Int::from_i64(32767))),
+            (Bounds::U32, Z3Value::Int(int_ast)) =>
+                Ok(int_ast.ge(&z3::ast::Int::from_u64(0)) & int_ast.le(&z3::ast::Int::from_u64(4294967295))),
+            (Bounds::I32, Z3Value::Int(int_ast)) =>
+                Ok(int_ast.ge(&z3::ast::Int::from_i64(-2147483648)) & int_ast.le(&z3::ast::Int::from_i64(2147483647))),
+            (Bounds::U64, Z3Value::Int(int_ast)) =>
+                Ok(int_ast.ge(&z3::ast::Int::from_u64(0)) & int_ast.le(&z3::ast::Int::from_u64(18446744073709551615))),
+            (Bounds::I64, Z3Value::Int(int_ast)) =>
+                Ok(int_ast.ge(&z3::ast::Int::from_i64(-9223372036854775808)) & int_ast.le(&z3::ast::Int::from_i64(9223372036854775807))),
+            _ => Err(CheckError {
+                message: "Bounds can't be applied to this type".to_owned(),
+            }),
+        }
+    }
 }
 
 impl From<NulError> for CheckError {
@@ -37,6 +85,38 @@ impl From<NulError> for CheckError {
         CheckError {
             message: format!("NulError: {}", err),
         }
+    }
+}
+
+impl CheckedVar {
+    fn z3_name(&self) -> String {
+        if self.mutable || self.version > 0 {
+            format!("{}:{}", self.name, self.version)
+        } else {
+            self.name.clone()
+        }
+    }
+
+    fn z3_const_and_bounds(&self) -> Result<(Z3Value, Bounds), CheckError> {
+        self.var_type.to_z3_const(&self.z3_name())
+    }
+
+    fn z3_const(&self) -> Result<Z3Value, CheckError> {
+        Ok(self.z3_const_and_bounds()?.0)
+    }
+
+    fn bounds(&self) -> Result<Bounds, CheckError> {
+        Ok(self.z3_const_and_bounds()?.1)
+    }
+
+    fn mutate(&mut self) {
+        self.version += 1;
+    }
+
+    fn replace(&mut self, mutable: bool, typ: &Type) {
+        self.version += 1;
+        self.mutable = mutable;
+        self.var_type = typ.clone();
     }
 }
 
@@ -118,13 +198,39 @@ impl Literal {
 }
 
 impl Type {
-    fn to_z3_const(&self, name: &str) -> Result<Z3Value, CheckError> {
+    fn to_z3_const(&self, name: &str) -> Result<(Z3Value, Bounds), CheckError> {
         match self.name.as_str() {
-            "int" => Ok(Z3Value::Int(z3::ast::Int::new_const(name))),
-            "str" => Ok(Z3Value::Str(z3::ast::String::new_const(name))),
+            "u8" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::U8)),
+            "i8" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::I8)),
+            "u16" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::U16)),
+            "i16" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::I16)),
+            "u32" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::U32)),
+            "i32" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::I32)),
+            "u64" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::U64)),
+            "i64" => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), Bounds::I64)),
+            "bool" => Ok((Z3Value::Bool(z3::ast::Bool::new_const(name)), Bounds::None)),
+            "str" => Ok((Z3Value::Str(z3::ast::String::new_const(name)), Bounds::None)),
             _ => Err(CheckError {
                 message: format!("Unsupported type: {}", self.name),
             }),
+        }
+    }
+}
+
+impl AssignOp {
+    fn relate(&self, old_left: Z3Value, new_left: Z3Value, right: Z3Value) -> Result<z3::ast::Bool, CheckError> {
+        match self {
+            AssignOp::Assign => new_left.eq(&right),
+            AssignOp::PlusAssign => {
+                let left_int = old_left.int()?;
+                let right_int = right.int()?;
+                Ok(new_left.int()?.eq(left_int + right_int))
+            }
+            AssignOp::MinusAssign => {
+                let left_int = old_left.int()?;
+                let right_int = right.int()?;
+                Ok(new_left.int()?.eq(left_int - right_int))
+            }
         }
     }
 }
@@ -139,8 +245,8 @@ impl Env {
     }
 
     fn get_var(&self, name: &str) -> Result<Z3Value, CheckError> {
-        if let Some(ty) = self.vars.get(name) {
-            ty.to_z3_const(name)
+        if let Some(info) = self.vars.get(name) {
+            info.z3_const()
         } else {
             Err(CheckError {
                 message: format!("Undefined variable: {}", name),
@@ -148,21 +254,22 @@ impl Env {
         }
     }
 
-    fn insert_var(&mut self, name: &str, ty: &Type) -> Result<Z3Value, CheckError> {
-        if self.vars.contains_key(name) {
-            return Err(CheckError {
-                message: format!("Variable {} already defined", name),
-            });
-        }
-        self.vars.insert(name.to_owned(), ty.clone());
-        Ok(ty.to_z3_const(name)?)
+    fn insert_var(&mut self, name: &str, mutable: bool, ty: &Type) -> Result<(Z3Value, Bounds), CheckError> {
+        self.vars.entry(name.to_owned())
+            .and_modify(|info| info.replace(mutable, ty))
+            .or_insert_with(|| CheckedVar {
+                name: name.to_owned(),
+                version: 0,
+                mutable,
+                var_type: ty.clone(),
+            }).z3_const_and_bounds()
     }
 
     fn assume(&mut self, cond: z3::ast::Bool) {
         self.assumptions.push(cond);
     }
 
-    fn assert(&mut self, cond: &z3::ast::Bool) -> Result<(), CheckError> {
+    fn assert(&mut self, cond: &z3::ast::Bool, message: &str) -> Result<(), CheckError> {
         let solver = z3::Solver::new();
         for assumption in &self.assumptions {
             solver.assert(assumption);
@@ -170,7 +277,7 @@ impl Env {
         solver.assert(cond.not());
         if solver.check() != z3::SatResult::Unsat {
             Err(CheckError {
-                message: "Assertion failed".to_owned(),
+                message: message.to_owned(),
             })
         } else {
             self.assumptions.push(cond.clone());
@@ -193,6 +300,24 @@ impl Env {
             println!("Side effect: {}", effect);
         }
     }
+
+    fn assign(&mut self, var: &str, op: AssignOp, value: Z3Value) -> Result<(), CheckError> {
+        let info = self.vars.get_mut(var).ok_or(CheckError {
+            message: format!("Undefined variable: {}", var),
+        })?;
+        if !info.mutable {
+            return Err(CheckError {
+                message: format!("Cannot assign to immutable variable: {}", var),
+            });
+        }
+        let old_var = info.z3_const()?;
+        info.mutate();
+        let new_var = info.z3_const()?;
+        let bounds = info.bounds()?;
+        self.assume(op.relate(old_var, new_var.clone(), value)?);
+        self.assert(&bounds.applies_to(new_var)?, "Bounds check failed")?;
+        Ok(())
+    }
 }
 
 impl Stmt {
@@ -203,16 +328,23 @@ impl Stmt {
                 Ok(())
             }
             Stmt::Let { name, value } => {
-                if env.vars.contains_key(name) {
-                    return Err(CheckError {
-                        message: format!("Variable {} already defined", name),
-                    });
-                }
                 let z3_value = value.z3_check(env)?;
                 let var_type = z3_value.get_type();
-                let z3_var = env.insert_var(name, &var_type)?;
+                let (z3_var, bounds) = env.insert_var(name, false, &var_type)?;
                 env.assume(z3_var.eq(&z3_value)?);
+                env.assert(&bounds.applies_to(z3_value)?, "Bounds check failed")?;
                 Ok(())
+            }
+            Stmt::LetMut { name, typ, value } => {
+                let z3_value = value.z3_check(env)?;
+                let (z3_var, bounds) = env.insert_var(name, true, typ)?;
+                env.assume(z3_var.eq(&z3_value)?);
+                env.assert(&bounds.applies_to(z3_value)?, "Bounds check failed")?;
+                Ok(())
+            }
+            Stmt::Assign { name, op, value } => {
+                let z3_value = value.z3_check(env)?;
+                env.assign(name, *op, z3_value)
             }
         }
     }
@@ -236,7 +368,7 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
         }
         ("assert", 1) => {
             let bool_arg = args[0].bool()?;
-            env.assert(bool_arg)?;
+            env.assert(bool_arg, "Assertion failed")?;
             Ok(Z3Value::Void)
         }
         ("println", 1) => {
@@ -274,7 +406,7 @@ impl Expr {
 fn z3_check_funcdef(func: &FuncDef) -> Result<(), CheckError> {
     let mut env = Env::new();
     for arg in &func.args {
-        env.insert_var(&arg.name, &arg.arg_type)?;
+        env.insert_var(&arg.name, false, &arg.arg_type)?;
     }
     let body_z3_value = func.body.z3_check(&mut env)?;
     body_z3_value.type_check(&func.return_type)?;

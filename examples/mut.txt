@@ -1,0 +1,6 @@
+fn main() {
+    let mut x:u64 = 2;
+    assert(x == 2);
+    x += 12;
+    assert(x == 14)
+}

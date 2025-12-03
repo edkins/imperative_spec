@@ -6,6 +6,7 @@ enum Word {
     Identifier(String),
     Fn,
     Let,
+    Mut,
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -24,6 +25,8 @@ enum Symbol {
     Minus,
     EqualEqual,
     NotEqual,
+    PlusAssign,
+    MinusAssign,
 }
 
 fn pure_whitespace1(input: &str) -> IResult<&str, &str> {
@@ -67,6 +70,7 @@ fn word(input: &str) -> IResult<&str, Word> {
     let word = match ident {
         "fn" => Word::Fn,
         "let" => Word::Let,
+        "mut" => Word::Mut,
         _ => Word::Identifier(ident.to_string()),
     };
     Ok((input, word))
@@ -155,6 +159,8 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "-" => Ok((input, Symbol::Minus)),
         "!=" => Ok((input, Symbol::NotEqual)),
         "==" => Ok((input, Symbol::EqualEqual)),
+        "+=" => Ok((input, Symbol::PlusAssign)),
+        "-=" => Ok((input, Symbol::MinusAssign)),
         _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char))),
     }
 }
@@ -333,11 +339,42 @@ fn keyword(expected: Word) -> impl Fn(&str) -> IResult<&str, Word> {
 
 fn stmt_let(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = keyword(Word::Let)(input)?;
+    let (input, mutable) = opt(keyword(Word::Mut)).parse(input)?;
     let (input, name) = identifier(input)?;
-    let (input, _) = symbol(Symbol::Assign)(input)?;
+    if mutable.is_some() {
+        let (input, typ) = preceded(symbol(Symbol::Colon), typ).parse(input)?;
+        let (input, _) = symbol(Symbol::Assign)(input)?;
+        let (input, value) = expr_comma(input)?;
+        return Ok((input, Stmt::LetMut {
+            name,
+            typ,
+            value,
+        }));
+    } else {
+        let (input, _) = symbol(Symbol::Assign)(input)?;
+        let (input, value) = expr_comma(input)?;
+        Ok((input, Stmt::Let {
+            name,
+            value,
+        }))
+    }
+}
+
+fn assignop(input: &str) -> IResult<&str, AssignOp> {
+    alt((
+        value(AssignOp::Assign, symbol(Symbol::Assign)),
+        value(AssignOp::PlusAssign, symbol(Symbol::PlusAssign)),
+        value(AssignOp::MinusAssign, symbol(Symbol::MinusAssign)),
+    )).parse(input)
+}
+
+fn stmt_assign(input: &str) -> IResult<&str, Stmt> {
+    let (input, name) = identifier(input)?;
+    let (input, op) = assignop(input)?;
     let (input, value) = expr_comma(input)?;
-    Ok((input, Stmt::Let {
+    Ok((input, Stmt::Assign {
         name,
+        op,
         value,
     }))
 }
@@ -345,6 +382,7 @@ fn stmt_let(input: &str) -> IResult<&str, Stmt> {
 fn stmt(input: &str) -> IResult<&str, Stmt> {
     alt((
         stmt_let,
+        stmt_assign,
     )).parse(input)
 }
 
@@ -356,7 +394,7 @@ fn stmt_semicolon(input: &str) -> IResult<&str, Expr> {
 }
 
 fn expr(input: &str) -> IResult<&str, Expr> {
-    alt((expr_semicolon, stmt_semicolon)).parse(input)
+    alt((stmt_semicolon, expr_semicolon)).parse(input)
 }
 
 fn arg(input: &str) -> IResult<&str, Arg> {
@@ -483,9 +521,25 @@ mod test {
     }
 
     #[test]
+    fn test_let_mut() {
+        let stmt = "let mut x:u64 = 5";
+        let result = super::stmt(stmt);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
+    }
+
+    #[test]
     fn test_let_semicolon() {
         let expr = "let x = 5; x";
         let result = super::expr(expr);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
+    }
+
+    #[test]
+    fn test_plusassign() {
+        let stmt = "x += 10";
+        let result = super::stmt(stmt);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().0, "");
     }

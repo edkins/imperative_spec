@@ -107,7 +107,7 @@ impl Display for FuncDef {
                 write!(f, ", ")?;
             }
         }
-        write!(f, ") {{\n")?;
+        write!(f, ") -> {} {{\n", self.return_type)?;
         self.body.fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
         write!(f, "\n}}")
     }
@@ -118,6 +118,16 @@ impl Display for Stmt {
         match self {
             Stmt::Expr(expr) => write!(f, "{}", expr),
             Stmt::Let { name, value } => write!(f, "let {} = {}", name, value),
+            Stmt::LetMut { name, typ, value } => write!(f, "let mut {}: {} = {}", name, typ.name, value),
+            Stmt::Assign { name, op, value } => {
+                let op_str = match op {
+                    AssignOp::Assign => "=",
+                    AssignOp::PlusAssign => "+=",
+                    AssignOp::MinusAssign => "-=",
+                };
+                write!(f, "{} {} ", name, op_str)?;
+                value.fmt_with_binding_strength(f, BindingStrength::PlusMinus)
+            }
         }
     }
 }

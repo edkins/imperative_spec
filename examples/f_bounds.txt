@@ -1,0 +1,5 @@
+fn main() {
+    let mut x:u8 = 255;
+    x += 1;
+    println("this should fail")
+}
