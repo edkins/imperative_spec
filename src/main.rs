@@ -50,16 +50,12 @@ fn main() {
         .expect("Failed to get metadata")
         .is_dir()
     {
-        check_dir(&args.input_file)
-            .expect("Failed to check directory");
+        check_dir(&args.input_file).expect("Failed to check directory");
         return;
     }
 
-    let input = std::fs::read_to_string(&args.input_file)
-        .expect("Failed to read input file");
-    let source_file = syntax::parse::parse_source_file(&input)
-        .expect("Failed to parse input file");
+    let input = std::fs::read_to_string(&args.input_file).expect("Failed to read input file");
+    let source_file = syntax::parse::parse_source_file(&input).expect("Failed to parse input file");
     println!("{}", source_file);
-    check::z3check::z3_check(&source_file)
-        .expect("Failed to check function");
+    check::z3check::z3_check(&source_file).expect("Failed to check function");
 }

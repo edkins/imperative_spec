@@ -32,10 +32,7 @@ pub enum Expr {
     Literal(Literal),
     Variable(String),
     Semicolon(Box<Stmt>, Box<Expr>),
-    FunctionCall {
-        name: String,
-        args: Vec<Expr>,
-    },
+    FunctionCall { name: String, args: Vec<Expr> },
 }
 
 #[derive(Clone, Copy)]

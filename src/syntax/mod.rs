@@ -1,3 +1,3 @@
 pub mod ast;
-pub mod print;
 pub mod parse;
+pub mod print;

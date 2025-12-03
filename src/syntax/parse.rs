@@ -1,4 +1,12 @@
-use nom::{IResult, Parser, branch::alt, bytes::complete::{tag, take_until, take_while, take_while1}, character::complete::{anychar, satisfy}, combinator::{all_consuming, map, opt, recognize, value}, multi::{many0, separated_list0, separated_list1}, sequence::{delimited, pair, preceded, terminated}};
+use nom::{
+    IResult, Parser,
+    branch::alt,
+    bytes::complete::{tag, take_until, take_while, take_while1},
+    character::complete::{anychar, satisfy},
+    combinator::{all_consuming, map, opt, recognize, value},
+    multi::{many0, separated_list0, separated_list1},
+    sequence::{delimited, pair, preceded, terminated},
+};
 
 use crate::syntax::ast::*;
 
@@ -19,7 +27,7 @@ enum Symbol {
     CloseParen,
     OpenBrace,
     CloseBrace,
- 
+
     Colon,
     Assign,
     Arrow,
@@ -40,17 +48,11 @@ fn pure_whitespace1(input: &str) -> IResult<&str, &str> {
 }
 
 fn comment(input: &str) -> IResult<&str, &str> {
-    preceded(
-        tag("//"),
-        take_while(|c| c != '\n')
-    ).parse(input)
+    preceded(tag("//"), take_while(|c| c != '\n')).parse(input)
 }
 
 fn multiline_comment(input: &str) -> IResult<&str, &str> {
-    preceded(
-        tag("/*"),
-        take_until("*/")
-    ).parse(input)
+    preceded(tag("/*"), take_until("*/")).parse(input)
 }
 
 fn whitespace_section(input: &str) -> IResult<&str, &str> {
@@ -70,9 +72,14 @@ fn alphanum_underscore(c: char) -> bool {
 }
 
 fn word(input: &str) -> IResult<&str, Word> {
-    let (input, ident) = preceded(whitespace0, recognize(
-        preceded(satisfy(alpha_underscore), take_while(alphanum_underscore))
-    )).parse(input)?;
+    let (input, ident) = preceded(
+        whitespace0,
+        recognize(preceded(
+            satisfy(alpha_underscore),
+            take_while(alphanum_underscore),
+        )),
+    )
+    .parse(input)?;
     let word = match ident {
         "fn" => Word::Fn,
         "let" => Word::Let,
@@ -85,17 +92,22 @@ fn word(input: &str) -> IResult<&str, Word> {
 }
 
 fn integer(input: &str) -> IResult<&str, Literal> {
-    let (input, int_str) = preceded(whitespace0, recognize(
-        many0(satisfy(|c| c.is_ascii_digit()))
-    )).parse(input)?;
-    let int_value: Result<i64,_> = int_str.parse();
+    let (input, int_str) = preceded(
+        whitespace0,
+        recognize(many0(satisfy(|c| c.is_ascii_digit()))),
+    )
+    .parse(input)?;
+    let int_value: Result<i64, _> = int_str.parse();
     match int_value {
         Ok(v) => Ok((input, Literal::I64(v))),
         Err(_) => {
-            let uint_value: Result<u64,_> = int_str.parse();
+            let uint_value: Result<u64, _> = int_str.parse();
             match uint_value {
                 Ok(uv) => Ok((input, Literal::U64(uv))),
-                Err(_) => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Digit))),
+                Err(_) => Err(nom::Err::Error(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Digit,
+                ))),
             }
         }
     }
@@ -110,31 +122,40 @@ fn normal_string_contents1(input: &str) -> IResult<&str, String> {
 }
 
 fn escaped_char(input: &str) -> IResult<&str, String> {
-    map(preceded(
-        tag("\\"),
-        alt((
-            value('\\', tag("\\")),
-            value('\"', tag("\"")),
-            value('\'', tag("\'")),
-            value('\n', tag("n")),
-            value('\r', tag("r")),
-            value('\t', tag("t")),
-        ))
-    ), |c| c.to_string()).parse(input)
+    map(
+        preceded(
+            tag("\\"),
+            alt((
+                value('\\', tag("\\")),
+                value('\"', tag("\"")),
+                value('\'', tag("\'")),
+                value('\n', tag("n")),
+                value('\r', tag("r")),
+                value('\t', tag("t")),
+            )),
+        ),
+        |c| c.to_string(),
+    )
+    .parse(input)
 }
 
 fn string_contents(input: &str) -> IResult<&str, String> {
-    map(many0(alt((
-        normal_string_contents1,
-        escaped_char
-    ))), |pieces: Vec<String>| pieces.concat()).parse(input)
+    map(
+        many0(alt((normal_string_contents1, escaped_char))),
+        |pieces: Vec<String>| pieces.concat(),
+    )
+    .parse(input)
 }
 
 fn string(input: &str) -> IResult<&str, Literal> {
     map(
-        preceded(whitespace0, delimited(tag("\""), string_contents, tag("\""))),
-        Literal::Str)
-        .parse(input)
+        preceded(
+            whitespace0,
+            delimited(tag("\""), string_contents, tag("\"")),
+        ),
+        Literal::Str,
+    )
+    .parse(input)
 }
 
 fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
@@ -146,7 +167,10 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
         ')' => Ok((input, Symbol::CloseParen)),
         '{' => Ok((input, Symbol::OpenBrace)),
         '}' => Ok((input, Symbol::CloseBrace)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char))),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Char,
+        ))),
     }
 }
 
@@ -173,7 +197,10 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "<=" => Ok((input, Symbol::Le)),
         ">" => Ok((input, Symbol::Gt)),
         ">=" => Ok((input, Symbol::Ge)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Char))),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Char,
+        ))),
     }
 }
 
@@ -187,16 +214,16 @@ fn symbol(expected: Symbol) -> impl Fn(&str) -> IResult<&str, Symbol> {
         if sym == expected {
             Ok((input, sym))
         } else {
-            Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+            Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )))
         }
     }
 }
 
 fn literal(input: &str) -> IResult<&str, Expr> {
-    map(alt((
-        integer,
-        string,
-    )), Expr::Literal).parse(input)
+    map(alt((integer, string)), Expr::Literal).parse(input)
 }
 
 // fn variable(input: &str) -> IResult<&str, Expr> {
@@ -211,7 +238,10 @@ fn identifier(input: &str) -> IResult<&str, String> {
     let (input, word) = word(input)?;
     match word {
         Word::Identifier(name) => Ok((input, name)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag))),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
     }
 }
 
@@ -234,19 +264,26 @@ fn call_suffix(name: String) -> impl Fn(&str) -> IResult<&str, Expr> {
         let (input, args) = delimited(
             symbol(Symbol::OpenParen),
             separated_list0(symbol(Symbol::Comma), expr_comma),
-            symbol(Symbol::CloseParen)
-        ).parse(input)?;
-        Ok((input, Expr::FunctionCall {
-            name: name.clone(),
-            args,
-        }))
+            symbol(Symbol::CloseParen),
+        )
+        .parse(input)?;
+        Ok((
+            input,
+            Expr::FunctionCall {
+                name: name.clone(),
+                args,
+            },
+        ))
     }
 }
 fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
     move |input: &str| {
         let (input, _) = symbol(Symbol::Semicolon)(input)?;
         let (input, right) = expr(input)?;
-        Ok((input, Expr::Semicolon(Box::new(Stmt::Expr(left.clone())), Box::new(right))))
+        Ok((
+            input,
+            Expr::Semicolon(Box::new(Stmt::Expr(left.clone())), Box::new(right)),
+        ))
     }
 }
 
@@ -255,15 +292,13 @@ fn expr_tight(input: &str) -> IResult<&str, Expr> {
         variable_or_call,
         literal,
         delimited(symbol(Symbol::OpenParen), expr, symbol(Symbol::CloseParen)),
-        delimited(symbol(Symbol::OpenBrace), expr, symbol(Symbol::CloseBrace))
-    )).parse(input)
+        delimited(symbol(Symbol::OpenBrace), expr, symbol(Symbol::CloseBrace)),
+    ))
+    .parse(input)
 }
 
 fn plusminus(input: &str) -> IResult<&str, Symbol> {
-    alt((
-        symbol(Symbol::Plus),
-        symbol(Symbol::Minus),
-    )).parse(input)
+    alt((symbol(Symbol::Plus), symbol(Symbol::Minus))).parse(input)
 }
 
 fn cmpop(input: &str) -> IResult<&str, Symbol> {
@@ -274,7 +309,8 @@ fn cmpop(input: &str) -> IResult<&str, Symbol> {
         symbol(Symbol::Le),
         symbol(Symbol::Gt),
         symbol(Symbol::Ge),
-    )).parse(input)
+    ))
+    .parse(input)
 }
 
 fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
@@ -353,7 +389,10 @@ fn keyword(expected: Word) -> impl Fn(&str) -> IResult<&str, Word> {
         if std::mem::discriminant(&word) == std::mem::discriminant(&expected) {
             Ok((input, word))
         } else {
-            Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+            Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )))
         }
     }
 }
@@ -366,18 +405,11 @@ fn stmt_let(input: &str) -> IResult<&str, Stmt> {
         let (input, typ) = preceded(symbol(Symbol::Colon), typ).parse(input)?;
         let (input, _) = symbol(Symbol::Assign)(input)?;
         let (input, value) = expr_comma(input)?;
-        return Ok((input, Stmt::LetMut {
-            name,
-            typ,
-            value,
-        }));
+        return Ok((input, Stmt::LetMut { name, typ, value }));
     } else {
         let (input, _) = symbol(Symbol::Assign)(input)?;
         let (input, value) = expr_comma(input)?;
-        Ok((input, Stmt::Let {
-            name,
-            value,
-        }))
+        Ok((input, Stmt::Let { name, value }))
     }
 }
 
@@ -386,25 +418,19 @@ fn assignop(input: &str) -> IResult<&str, AssignOp> {
         value(AssignOp::Assign, symbol(Symbol::Assign)),
         value(AssignOp::PlusAssign, symbol(Symbol::PlusAssign)),
         value(AssignOp::MinusAssign, symbol(Symbol::MinusAssign)),
-    )).parse(input)
+    ))
+    .parse(input)
 }
 
 fn stmt_assign(input: &str) -> IResult<&str, Stmt> {
     let (input, name) = identifier(input)?;
     let (input, op) = assignop(input)?;
     let (input, value) = expr_comma(input)?;
-    Ok((input, Stmt::Assign {
-        name,
-        op,
-        value,
-    }))
+    Ok((input, Stmt::Assign { name, op, value }))
 }
 
 fn stmt(input: &str) -> IResult<&str, Stmt> {
-    alt((
-        stmt_let,
-        stmt_assign,
-    )).parse(input)
+    alt((stmt_let, stmt_assign)).parse(input)
 }
 
 fn stmt_semicolon(input: &str) -> IResult<&str, Expr> {
@@ -422,10 +448,7 @@ fn arg(input: &str) -> IResult<&str, Arg> {
     let (input, name) = identifier(input)?;
     let (input, _) = symbol(Symbol::Colon)(input)?;
     let (input, arg_type) = typ(input)?;
-    Ok((input, Arg {
-        name,
-        arg_type,
-    }))
+    Ok((input, Arg { name, arg_type }))
 }
 
 fn named_ret(input: &str) -> IResult<&str, (Option<String>, Type)> {
@@ -452,37 +475,45 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
     let (input, args) = delimited(
         symbol(Symbol::OpenParen),
         separated_list0(symbol(Symbol::Comma), arg),
-        symbol(Symbol::CloseParen)
-    ).parse(input)?;
+        symbol(Symbol::CloseParen),
+    )
+    .parse(input)?;
     let (input, return_stuff) = opt(preceded(symbol(Symbol::Arrow), ret)).parse(input)?;
     let (input, preconditions) = opt(preceded(
         keyword(Word::Requires),
         separated_list1(symbol(Symbol::Comma), expr_comma),
-    )).parse(input)?;
+    ))
+    .parse(input)?;
     let (input, postconditions) = opt(preceded(
         keyword(Word::Ensures),
         separated_list1(symbol(Symbol::Comma), expr_comma),
-    )).parse(input)?;
-    let (input, body) = delimited(
-        symbol(Symbol::OpenBrace),
-        expr,
-        symbol(Symbol::CloseBrace)
-    ).parse(input)?;
+    ))
+    .parse(input)?;
+    let (input, body) =
+        delimited(symbol(Symbol::OpenBrace), expr, symbol(Symbol::CloseBrace)).parse(input)?;
 
     let (return_name, return_type) = match return_stuff {
         Some((rn, rt)) => (rn, rt),
-        None => (None, Type { name: "void".to_string() }),
+        None => (
+            None,
+            Type {
+                name: "void".to_string(),
+            },
+        ),
     };
 
-    Ok((input, FuncDef {
-        name,
-        args,
-        return_name,
-        return_type,
-        preconditions: preconditions.unwrap_or_else(Vec::new),
-        postconditions: postconditions.unwrap_or_else(Vec::new),
-        body,
-    }))
+    Ok((
+        input,
+        FuncDef {
+            name,
+            args,
+            return_name,
+            return_type,
+            preconditions: preconditions.unwrap_or_else(Vec::new),
+            postconditions: postconditions.unwrap_or_else(Vec::new),
+            body,
+        },
+    ))
 }
 
 fn source_file(input: &str) -> IResult<&str, SourceFile> {
@@ -534,8 +565,7 @@ pub fn parse_source_file(input: &str) -> Result<SourceFile, ErrorLocation> {
 #[cfg(test)]
 mod test {
     #[test]
-    fn test_var()
-    {
+    fn test_var() {
         let expr = "my_variable";
         let result = super::variable_or_call(expr);
         assert!(result.is_ok());
@@ -543,16 +573,14 @@ mod test {
     }
 
     #[test]
-    fn test_empty()
-    {
+    fn test_empty() {
         let expr = "";
         let result = super::expr(expr);
         assert!(!result.is_ok());
     }
 
     #[test]
-    fn test_empty_call_suffix()
-    {
+    fn test_empty_call_suffix() {
         let suffix = "()";
         let result = super::call_suffix("my_function".to_string())(suffix);
         assert!(result.is_ok());
@@ -560,8 +588,7 @@ mod test {
     }
 
     #[test]
-    fn test_empty_call()
-    {
+    fn test_empty_call() {
         let expr = "foo()";
         let result = super::expr(expr);
         assert!(result.is_ok());
