@@ -250,18 +250,18 @@ fn identifier(input: &str) -> IResult<&str, String> {
     }
 }
 
-fn specific_identifier(expected: &str) -> impl Fn(&str) -> IResult<&str, String> {
-    move |input: &str| {
-        let (input, word) = word(input)?;
-        match word {
-            Word::Identifier(name) if name == expected => Ok((input, name)),
-            _ => Err(nom::Err::Error(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Tag,
-            ))),
-        }
-    }
-}
+// fn specific_identifier(expected: &str) -> impl Fn(&str) -> IResult<&str, String> {
+//     move |input: &str| {
+//         let (input, word) = word(input)?;
+//         match word {
+//             Word::Identifier(name) if name == expected => Ok((input, name)),
+//             _ => Err(nom::Err::Error(nom::error::Error::new(
+//                 input,
+//                 nom::error::ErrorKind::Tag,
+//             ))),
+//         }
+//     }
+// }
 
 fn variable_or_call(input: &str) -> IResult<&str, Expr> {
     let (input, name) = identifier(input)?;
@@ -326,7 +326,7 @@ fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
 
 fn expr_tight(input: &str) -> IResult<&str, Expr> {
     alt((
-        expr_vec,  // ahead of variable_or_call to prefer parsing vec! over treating 'vec' as a variable
+        // expr_vec,  // ahead of variable_or_call to prefer parsing vec! over treating 'vec' as a variable
         expr_array,
         variable_or_call,
         literal,
@@ -430,26 +430,23 @@ fn expr_array(input: &str) -> IResult<&str, Expr> {
     .parse(input)?;
     Ok((
         input,
-        Expr::Sequence {
-            seq_type: SeqType::Array,
-            elements,
-        },
+        Expr::Sequence(elements)
     ))
 }
 
-fn expr_vec(input: &str) -> IResult<&str, Expr> {
-    // vec isn't a keyword. It only has special meaning when followed by '!'
-    map(
-        preceded(pair(specific_identifier("vec"), symbol(Symbol::Exclaim)), expr_array),
-        |array_expr| Expr::Sequence {
-            seq_type: SeqType::Vec,
-            elements: match array_expr {
-                Expr::Sequence { elements, .. } => elements,
-                _ => unreachable!(),
-            },
-        },
-    ).parse(input)
-}
+// fn expr_vec(input: &str) -> IResult<&str, Expr> {
+//     // vec isn't a keyword. It only has special meaning when followed by '!'
+//     map(
+//         preceded(pair(specific_identifier("vec"), symbol(Symbol::Exclaim)), expr_array),
+//         |array_expr| Expr::Sequence {
+//             seq_type: SeqType::Vec,
+//             elements: match array_expr {
+//                 Expr::Sequence { elements, .. } => elements,
+//                 _ => unreachable!(),
+//             },
+//         },
+//     ).parse(input)
+// }
 
 fn keyword(expected: Word) -> impl Fn(&str) -> IResult<&str, Word> {
     move |input: &str| {

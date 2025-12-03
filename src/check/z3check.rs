@@ -29,6 +29,7 @@ enum Z3Value {
     Str(z3::ast::String),
     Vec(z3::ast::Seq, Type),
     Array(z3::ast::Seq, Type),
+    UnknownSeq(Vec<Z3Value>),
 }
 
 impl std::fmt::Display for Z3Value {
@@ -38,8 +39,18 @@ impl std::fmt::Display for Z3Value {
             Z3Value::Bool(b) => write!(f, "{}", b),
             Z3Value::Int(i) => write!(f, "{}", i),
             Z3Value::Str(s) => write!(f, "{}", s),
-            Z3Value::Vec(v, t) => write!(f, "vec![{}... : {}]", v, t),
-            Z3Value::Array(a, t) => write!(f, "[{}... : {}]", a, t),
+            Z3Value::Vec(v, t) => write!(f, "{} : Vec<{}>", v, t),
+            Z3Value::Array(a, t) => write!(f, "{} : Array<{}>", a, t),
+            Z3Value::UnknownSeq(v) => {
+                write!(f, "[")?;
+                for (i, val) in v.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", val)?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }
@@ -176,8 +187,23 @@ impl Z3Value {
                 name: "Vec".to_owned(),
                 type_args: vec![TypeArg::Type(e.clone())],
             },
+            Z3Value::UnknownSeq(xs) => Type {
+                name: "UnknownSeq".to_owned(),
+                type_args: vec![TypeArg::Type(xs[0].guess_type())],
+            }
         }
     }
+
+    // fn len(&self) -> Result<z3::ast::Int, CheckError> {
+    //     match self {
+    //         Z3Value::Vec(seq, _) => Ok(seq.length()),
+    //         Z3Value::Array(seq, _) => Ok(seq.length()),
+    //         Z3Value::UnknownSeq(xs) => Ok(z3::ast::Int::from_u64(xs.len() as u64)),
+    //         _ => Err(CheckError {
+    //             message: "Length can only be obtained for Vec or Array types".to_owned(),
+    //         }),
+    //     }
+    // }
 
     fn eq(&self, other: &Z3Value) -> Result<z3::ast::Bool, CheckError> {
         match (self, other) {
@@ -186,6 +212,16 @@ impl Z3Value {
             (Z3Value::Str(a), Z3Value::Str(b)) => Ok(a.eq(b)),
             (Z3Value::Vec(a, t), Z3Value::Vec(b, u)) if t==u => Ok(a.eq(b)),
             (Z3Value::Array(a, t), Z3Value::Array(b, u)) if t==u => Ok(a.eq(b)),
+            (Z3Value::Vec(a, t), Z3Value::UnknownSeq(xs)) => {
+                let mut eqs = vec![a.length().eq(&z3::ast::Int::from_u64(xs.len() as u64))];
+                for (i, x) in xs.iter().enumerate() {
+                    let idx = z3::ast::Int::from_u64(i as u64);
+                    let elem = a.nth(&idx);
+                    let x_dyn = x.to_z3_dynamic()?;
+                    eqs.push(elem.eq(&x_dyn));
+                }
+                Ok(z3::ast::Bool::and(&eqs))
+            }
             _ => Err(CheckError {
                 message: format!("Type mismatch or unsupported type in equality: {} vs {}", self, other),
             }),
@@ -241,6 +277,9 @@ impl Z3Value {
             Z3Value::Array(seq, _) => Ok(seq.clone().into()),
             Z3Value::Void => Err(CheckError {
                 message: "Void type cannot be converted to Z3 dynamic".to_owned(),
+            }),
+            Z3Value::UnknownSeq(_) => Err(CheckError {
+                message: "UnknownSeq type cannot be converted to Z3 dynamic".to_owned(),
             }),
         }
     }
@@ -324,6 +363,36 @@ impl Type {
             }
             "void" => {
                 value.void()
+            }
+            "Vec" => {
+                if let Some(TypeArg::Type(expected_elem_type)) = self.type_args.get(0) {
+                    match value {
+                        Z3Value::Vec(v, elem_type) => {
+                            if elem_type == expected_elem_type {
+                                Ok(())
+                            } else {
+                                return Err(CheckError {
+                                    message: "Element type mismatch in Vec".to_owned(),
+                                });
+                            }
+                        }
+                        Z3Value::UnknownSeq(xs) => {
+                            for x in xs {
+                                expected_elem_type.check_value(x, env)?;
+                            }
+                            Ok(())
+                        }
+                        _ => {
+                            return Err(CheckError {
+                                message: format!("Expected Vec type, got {}", value),
+                            });
+                        }
+                    }
+                } else {
+                    Err(CheckError {
+                        message: "Vector type missing element type".to_owned(),
+                    })
+                }
             }
             _ => Err(CheckError {
                 message: format!("Unsupported type for check_or_assume_value: {}", self),
@@ -550,6 +619,7 @@ impl Env {
         info.mutate();
         let new_var = info.z3_const()?;
         self.assume(op.relate(old_var, new_var.clone(), value)?);
+        // println!("Checking value of assigned variable {} to type {}", new_var, ty);
         ty.check_value(&new_var.clone(), self)
     }
 
@@ -635,8 +705,9 @@ impl Stmt {
             Stmt::LetMut { name, typ, value } => {
                 let z3_value = value.z3_check(env)?;
                 let z3_var = env.insert_var(name, true, typ)?;
+                typ.check_value(&z3_value, env)?;
                 env.assume(z3_var.eq(&z3_value)?);
-                typ.check_value(&z3_var, env)?;
+                // println!("Checking value of variable {} to type {}", z3_var, typ);
                 Ok(())
             }
             Stmt::Assign { name, op, value } => {
@@ -647,55 +718,55 @@ impl Stmt {
     }
 }
 
-fn z3_mk_sequence(elems: &[Z3Value]) -> Result<Z3Value, CheckError> {
-    if elems.is_empty() {
-        return Err(CheckError {
-            message: "Cannot create sequence from empty elements".to_owned(),
-        });
-    }
-    let first_elem = &elems[0];
-    let elem_type = first_elem.guess_type();
-    let mut z3_elems:Vec<z3::ast::Dynamic> = Vec::new();
-    for elem in elems {
-        match elem {
-            Z3Value::Bool(b) => {
-                if elem_type.name != "bool" {
-                    return Err(CheckError {
-                        message: "Type mismatch in sequence elements".to_owned(),
-                    });
-                }
-                z3_elems.push(b.clone().into());
-            }
-            Z3Value::Int(i) => {
-                if elem_type.name != "int" {
-                    return Err(CheckError {
-                        message: "Type mismatch in sequence elements".to_owned(),
-                    });
-                }
-                z3_elems.push(i.clone().into());
-            }
-            Z3Value::Str(s) => {
-                if elem_type.name != "str" {
-                    return Err(CheckError {
-                        message: "Type mismatch in sequence elements".to_owned(),
-                    });
-                }
-                z3_elems.push(s.clone().into());
-            }
-            _ => {
-                return Err(CheckError {
-                    message: "Unsupported element type for sequence".to_owned(),
-                });
-            }
-        }
-    }
-    let values = z3_elems
-        .iter()
-        .map(|e| z3::ast::Seq::unit(e))
-        .collect::<Vec<_>>();
-    let seq_ast = z3::ast::Seq::concat(&values);
-    Ok(Z3Value::Vec(seq_ast, elem_type))
-}
+// fn z3_mk_sequence(elems: &[Z3Value]) -> Result<Z3Value, CheckError> {
+//     if elems.is_empty() {
+//         return Err(CheckError {
+//             message: "Cannot create sequence from empty elements".to_owned(),
+//         });
+//     }
+//     let first_elem = &elems[0];
+//     let elem_type = first_elem.guess_type();
+//     let mut z3_elems:Vec<z3::ast::Dynamic> = Vec::new();
+//     for elem in elems {
+//         match elem {
+//             Z3Value::Bool(b) => {
+//                 if elem_type.name != "bool" {
+//                     return Err(CheckError {
+//                         message: "Type mismatch in sequence elements".to_owned(),
+//                     });
+//                 }
+//                 z3_elems.push(b.clone().into());
+//             }
+//             Z3Value::Int(i) => {
+//                 if elem_type.name != "int" {
+//                     return Err(CheckError {
+//                         message: "Type mismatch in sequence elements".to_owned(),
+//                     });
+//                 }
+//                 z3_elems.push(i.clone().into());
+//             }
+//             Z3Value::Str(s) => {
+//                 if elem_type.name != "str" {
+//                     return Err(CheckError {
+//                         message: "Type mismatch in sequence elements".to_owned(),
+//                     });
+//                 }
+//                 z3_elems.push(s.clone().into());
+//             }
+//             _ => {
+//                 return Err(CheckError {
+//                     message: "Unsupported element type for sequence".to_owned(),
+//                 });
+//             }
+//         }
+//     }
+//     let values = z3_elems
+//         .iter()
+//         .map(|e| z3::ast::Seq::unit(e))
+//         .collect::<Vec<_>>();
+//     let seq_ast = z3::ast::Seq::concat(&values);
+//     Ok(Z3Value::Vec(seq_ast, elem_type))
+// }
 
 fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Value, CheckError> {
     match (name, args.len()) {
@@ -810,12 +881,12 @@ impl Expr {
                 stmt.z3_check(env)?;
                 expr.z3_check(env)
             }
-            Expr::Sequence { seq_type, elements } => {
+            Expr::Sequence(elements) => {
                 let z3elems = elements
                     .iter()
                     .map(|elem| elem.z3_check(env))
                     .collect::<Result<Vec<_>, _>>()?;
-                z3_mk_sequence(&z3elems)
+                Ok(Z3Value::UnknownSeq(z3elems))
             }
         }
     }

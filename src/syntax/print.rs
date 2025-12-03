@@ -118,19 +118,15 @@ impl Expr {
                 expr.fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
                 strength.close_brace(f, BindingStrength::Semicolon)
             },
-            Expr::Sequence { seq_type, elements } => {
-                let (open, close) = match seq_type {
-                    SeqType::Array => ("[", "]"),
-                    SeqType::Vec => ("vec![", "]"),
-                };
-                write!(f, "{}", open)?;
+            Expr::Sequence(elements) => {
+                write!(f, "[")?;
                 for (i, element) in elements.iter().enumerate() {
                     element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
                     if i != elements.len() - 1 {
                         write!(f, ", ")?;
                     }
                 }
-                write!(f, "{}", close)
+                write!(f, "]")
             }
         }
     }
