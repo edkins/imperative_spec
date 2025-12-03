@@ -1,6 +1,14 @@
 #[derive(Clone)]
 pub struct Type {
     pub name: String,
+    pub type_args: Vec<TypeArg>,
+}
+
+#[derive(Clone)]
+pub enum TypeArg {
+    Type(Type),
+    I64(i64),
+    U64(u64),
 }
 
 #[derive(Clone)]
@@ -34,6 +42,10 @@ pub enum Expr {
     Variable(String),
     Semicolon(Box<Stmt>, Box<Expr>),
     FunctionCall { name: String, args: Vec<Expr> },
+    Sequence {
+        seq_type: SeqType,
+        elements: Vec<Expr>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -41,6 +53,12 @@ pub enum AssignOp {
     Assign,
     PlusAssign,
     MinusAssign,
+}
+
+#[derive(Clone, Copy)]
+pub enum SeqType {
+    Array,
+    Vec,
 }
 
 #[derive(Clone)]

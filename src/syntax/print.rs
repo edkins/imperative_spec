@@ -2,9 +2,30 @@ use std::fmt::Display;
 
 use crate::syntax::ast::*;
 
+impl Display for TypeArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeArg::Type(typ) => write!(f, "{}", typ),
+            TypeArg::I64(value) => write!(f, "{}", value),
+            TypeArg::U64(value) => write!(f, "{}", value),
+        }
+    }
+}
+
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
+        write!(f, "{}", self.name)?;
+        if !self.type_args.is_empty() {
+            write!(f, "<")?;
+            for (i, arg) in self.type_args.iter().enumerate() {
+                write!(f, "{}", arg)?;
+                if i != self.type_args.len() - 1 {
+                    write!(f, ", ")?;
+                }
+            }
+            write!(f, ">")?;
+        }
+        Ok(())
     }
 }
 
@@ -96,6 +117,20 @@ impl Expr {
                 writeln!(f, ";")?;
                 expr.fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
                 strength.close_brace(f, BindingStrength::Semicolon)
+            },
+            Expr::Sequence { seq_type, elements } => {
+                let (open, close) = match seq_type {
+                    SeqType::Array => ("[", "]"),
+                    SeqType::Vec => ("vec![", "]"),
+                };
+                write!(f, "{}", open)?;
+                for (i, element) in elements.iter().enumerate() {
+                    element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                    if i != elements.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "{}", close)
             }
         }
     }
@@ -111,7 +146,7 @@ impl Display for FuncDef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "fn {}(", self.name)?;
         for (i, arg) in self.args.iter().enumerate() {
-            write!(f, "{}", arg.name)?;
+            write!(f, "{}: {}", arg.name, arg.arg_type)?;
             if i != self.args.len() - 1 {
                 write!(f, ", ")?;
             }
@@ -201,12 +236,14 @@ mod test {
                     name: "a".to_owned(),
                     arg_type: Type {
                         name: "i32".to_owned(),
+                        type_args: vec![],
                     },
                 },
                 Arg {
                     name: "b".to_owned(),
                     arg_type: Type {
                         name: "i32".to_owned(),
+                        type_args: vec![],
                     },
                 },
             ],
@@ -216,6 +253,7 @@ mod test {
             return_name: None,
             return_type: Type {
                 name: "i32".to_owned(),
+                type_args: vec![],
             },
             body: Expr::FunctionCall {
                 name: "sum".to_owned(),
@@ -226,7 +264,7 @@ mod test {
             },
         };
 
-        let expected = "fn add(a, b) {\nsum(a, b)\n}";
+        let expected = "fn add(a: i32, b: i32) -> i32\n{\nsum(a, b)\n}";
         let actual = format!("{}", func);
         assert_eq!(actual, expected);
     }
@@ -253,10 +291,12 @@ mod test {
                 name: "x".to_owned(),
                 arg_type: Type {
                     name: "i32".to_owned(),
+                    type_args: vec![],
                 },
             }],
             return_type: Type {
                 name: "i32".to_owned(),
+                type_args: vec![],
             },
             preconditions: vec![],
             postconditions: vec![],

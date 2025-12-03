@@ -41,26 +41,28 @@ struct CheckedFunction {
     body: Option<Expr>,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Bounds {
-    None,
-    U8,
-    I8,
-    U16,
-    I16,
-    U32,
-    I32,
-    U64,
-    I64,
-}
+// #[derive(Clone, Copy, Eq, PartialEq)]
+// enum Bounds {
+//     None,
+//     U8,
+//     I8,
+//     U16,
+//     I16,
+//     U32,
+//     I32,
+//     U64,
+//     I64,
+// }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BareType {
-    Int,
-    Bool,
-    Str,
-    Void,
-}
+// #[derive(Clone, Debug, Eq, PartialEq)]
+// enum BareType {
+//     Int,
+//     Bool,
+//     Str,
+//     Void,
+//     Array(Box<BareType>),
+//     Vec(Box<BareType>),
+// }
 
 #[derive(Clone)]
 struct CheckedVar {
@@ -78,6 +80,12 @@ struct Env {
     assumptions: Vec<z3::ast::Bool>,
     side_effects: HashSet<String>,
     other_funcs: Vec<CheckedFunction>,
+}
+
+#[derive(Clone, Copy)]
+enum AssertMode {
+    Assert,
+    Assume,
 }
 
 impl CheckedFunction {
@@ -111,39 +119,39 @@ impl CheckedFunction {
     }
 }
 
-impl Bounds {
-    fn applies_to(self, value: &Z3Value) -> Result<z3::ast::Bool, CheckError> {
-        match (self, value) {
-            (Bounds::None, _) => Ok(z3::ast::Bool::from_bool(true)),
-            (Bounds::U8, Z3Value::Int(int_ast)) => {
-                Ok(int_ast.ge(z3::ast::Int::from_u64(0)) & int_ast.le(z3::ast::Int::from_u64(255)))
-            }
-            (Bounds::I8, Z3Value::Int(int_ast)) => {
-                Ok(int_ast.ge(z3::ast::Int::from_i64(-128))
-                    & int_ast.le(z3::ast::Int::from_i64(127)))
-            }
-            (Bounds::U16, Z3Value::Int(int_ast)) => {
-                Ok(int_ast.ge(z3::ast::Int::from_u64(0))
-                    & int_ast.le(z3::ast::Int::from_u64(65535)))
-            }
-            (Bounds::I16, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_i64(-32768))
-                & int_ast.le(z3::ast::Int::from_i64(32767))),
-            (Bounds::U32, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_u64(0))
-                & int_ast.le(z3::ast::Int::from_u64(4294967295))),
-            (Bounds::I32, Z3Value::Int(int_ast)) => Ok(int_ast
-                .ge(z3::ast::Int::from_i64(-2147483648))
-                & int_ast.le(z3::ast::Int::from_i64(2147483647))),
-            (Bounds::U64, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_u64(0))
-                & int_ast.le(z3::ast::Int::from_u64(18446744073709551615))),
-            (Bounds::I64, Z3Value::Int(int_ast)) => Ok(int_ast
-                .ge(z3::ast::Int::from_i64(-9223372036854775808))
-                & int_ast.le(z3::ast::Int::from_i64(9223372036854775807))),
-            _ => Err(CheckError {
-                message: "Bounds can't be applied to this type".to_owned(),
-            }),
-        }
-    }
-}
+// impl Bounds {
+//     fn applies_to(self, value: &Z3Value) -> Result<z3::ast::Bool, CheckError> {
+//         match (self, value) {
+//             (Bounds::None, _) => Ok(z3::ast::Bool::from_bool(true)),
+//             (Bounds::U8, Z3Value::Int(int_ast)) => {
+//                 Ok(int_ast.ge(z3::ast::Int::from_u64(0)) & int_ast.le(z3::ast::Int::from_u64(255)))
+//             }
+//             (Bounds::I8, Z3Value::Int(int_ast)) => {
+//                 Ok(int_ast.ge(z3::ast::Int::from_i64(-128))
+//                     & int_ast.le(z3::ast::Int::from_i64(127)))
+//             }
+//             (Bounds::U16, Z3Value::Int(int_ast)) => {
+//                 Ok(int_ast.ge(z3::ast::Int::from_u64(0))
+//                     & int_ast.le(z3::ast::Int::from_u64(65535)))
+//             }
+//             (Bounds::I16, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_i64(-32768))
+//                 & int_ast.le(z3::ast::Int::from_i64(32767))),
+//             (Bounds::U32, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_u64(0))
+//                 & int_ast.le(z3::ast::Int::from_u64(4294967295))),
+//             (Bounds::I32, Z3Value::Int(int_ast)) => Ok(int_ast
+//                 .ge(z3::ast::Int::from_i64(-2147483648))
+//                 & int_ast.le(z3::ast::Int::from_i64(2147483647))),
+//             (Bounds::U64, Z3Value::Int(int_ast)) => Ok(int_ast.ge(z3::ast::Int::from_u64(0))
+//                 & int_ast.le(z3::ast::Int::from_u64(18446744073709551615))),
+//             (Bounds::I64, Z3Value::Int(int_ast)) => Ok(int_ast
+//                 .ge(z3::ast::Int::from_i64(-9223372036854775808))
+//                 & int_ast.le(z3::ast::Int::from_i64(9223372036854775807))),
+//             _ => Err(CheckError {
+//                 message: "Bounds can't be applied to this type".to_owned(),
+//             }),
+//         }
+//     }
+// }
 
 impl From<NulError> for CheckError {
     fn from(err: NulError) -> Self {
@@ -166,16 +174,8 @@ impl CheckedVar {
         }
     }
 
-    fn z3_const_and_bounds(&self) -> Result<(Z3Value, Bounds), CheckError> {
-        self.var_type.to_z3_const(&self.z3_name()?)
-    }
-
     fn z3_const(&self) -> Result<Z3Value, CheckError> {
-        Ok(self.z3_const_and_bounds()?.0)
-    }
-
-    fn bounds(&self) -> Result<Bounds, CheckError> {
-        Ok(self.z3_const_and_bounds()?.1)
+        self.var_type.to_z3_const(&self.z3_name()?)
     }
 
     fn mutate(&mut self) {
@@ -191,55 +191,65 @@ impl CheckedVar {
     }
 }
 
-impl BareType {
-    fn unbounded(self) -> Type {
-        match self {
-            BareType::Int => Type {
-                name: "int".to_owned(),
-            },
-            BareType::Bool => Type {
-                name: "bool".to_owned(),
-            },
-            BareType::Str => Type {
-                name: "str".to_owned(),
-            },
-            BareType::Void => Type {
-                name: "void".to_owned(),
-            },
-        }
-    }
-
-    fn check_z3_dynamic(self, dyn_ast: &z3::ast::Dynamic) -> Result<Z3Value, CheckError> {
-        match self {
-            BareType::Int => Ok(Z3Value::Int(dyn_ast.as_int().ok_or_else(|| {
-                CheckError {
-                    message: "Expected Int type".to_owned(),
-                }
-            })?)),
-            BareType::Bool => Ok(Z3Value::Bool(dyn_ast.as_bool().ok_or_else(|| {
-                CheckError {
-                    message: "Expected Bool type".to_owned(),
-                }
-            })?)),
-            BareType::Str => Ok(Z3Value::Str(dyn_ast.as_string().ok_or_else(|| {
-                CheckError {
-                    message: "Expected String type".to_owned(),
-                }
-            })?)),
-            BareType::Void => Err(CheckError {
-                message: "Void type cannot be converted from Z3 dynamic".to_owned(),
-            }),
-        }
-    }
-}
+// impl BareType {
+//     fn unbounded(self) -> Type {
+//         match self {
+//             BareType::Int => Type {
+//                 name: "int".to_owned(),
+//                 type_args: vec![],
+//             },
+//             BareType::Bool => Type {
+//                 name: "bool".to_owned(),
+//                 type_args: vec![],
+//             },
+//             BareType::Str => Type {
+//                 name: "str".to_owned(),
+//                 type_args: vec![],
+//             },
+//             BareType::Void => Type {
+//                 name: "void".to_owned(),
+//                 type_args: vec![],
+//             },
+//             BareType::Array(elem_type) => Type {
+//                 name: "array".to_owned(),
+//                 type_args: vec![elem_type.unbounded()],
+//             },
+//             BareType::Vec(elem_type) => Type {
+//                 name: "vec".to_owned(),
+//                 type_args: vec![elem_type.unbounded()],
+//             },
+//         }
+//     }
+// }
 
 impl Z3Value {
-    fn get_bare_type(&self) -> BareType {
+    // fn get_bare_type(&self) -> BareType {
+    //     match self {
+    //         Z3Value::Void => BareType::Void,
+    //         Z3Value::Bool(_) => BareType::Bool,
+    //         Z3Value::Int(_) => BareType::Int,
+    //         Z3Value::Str(_) => BareType::Str,
+    //     }
+    // }
+
+    fn guess_type(&self) -> Type {
         match self {
-            Z3Value::Void => BareType::Void,
-            Z3Value::Bool(_) => BareType::Bool,
-            Z3Value::Int(_) => BareType::Int,
-            Z3Value::Str(_) => BareType::Str,
+            Z3Value::Void => Type {
+                name: "void".to_owned(),
+                type_args: vec![],
+            },
+            Z3Value::Bool(_) => Type {
+                name: "bool".to_owned(),
+                type_args: vec![],
+            },
+            Z3Value::Int(_) => Type {
+                name: "int".to_owned(),
+                type_args: vec![],
+            },
+            Z3Value::Str(_) => Type {
+                name: "str".to_owned(),
+                type_args: vec![],
+            },
         }
     }
 
@@ -258,18 +268,18 @@ impl Z3Value {
         self.eq(other).map(|eq_ast| eq_ast.not())
     }
 
-    fn type_check(&self, typ: &Type, env: &mut Env) -> Result<(), CheckError> {
-        let self_type = self.get_bare_type();
-        let (bt, bounds) = typ.to_bare_type_and_bounds()?;
-        if self_type == bt {
-            env.assert(&bounds.applies_to(self)?, "Bounds check failed")?;
-            Ok(())
-        } else {
-            Err(CheckError {
-                message: format!("Type mismatch: expected {}, got {:?}", typ, self_type),
-            })
-        }
-    }
+    // fn type_check(&self, typ: &Type, env: &mut Env) -> Result<(), CheckError> {
+    //     let self_type = self.get_bare_type();
+    //     let (bt, bounds) = typ.to_bare_type_and_bounds()?;
+    //     if self_type == bt {
+    //         env.assert(&bounds.applies_to(self)?, "Bounds check failed")?;
+    //         Ok(())
+    //     } else {
+    //         Err(CheckError {
+    //             message: format!("Type mismatch: expected {}, got {:?}", typ, self_type),
+    //         })
+    //     }
+    // }
 
     fn bool(&self) -> Result<&z3::ast::Bool, CheckError> {
         match self {
@@ -298,6 +308,15 @@ impl Z3Value {
         }
     }
 
+    fn void(&self) -> Result<(), CheckError> {
+        match self {
+            Z3Value::Void => Ok(()),
+            _ => Err(CheckError {
+                message: "Expected Void type".to_owned(),
+            }),
+        }
+    }
+
     fn to_z3_dynamic(&self) -> Result<z3::ast::Dynamic, CheckError> {
         match self {
             Z3Value::Bool(b) => Ok(b.clone().into()),
@@ -321,53 +340,166 @@ impl Literal {
 }
 
 impl Type {
-    fn to_bare_type_and_bounds(&self) -> Result<(BareType, Bounds), CheckError> {
+    fn int_bounds(&self) -> (Option<z3::ast::Int>, Option<z3::ast::Int>) {
         match self.name.as_str() {
-            "u8" => Ok((BareType::Int, Bounds::U8)),
-            "i8" => Ok((BareType::Int, Bounds::I8)),
-            "u16" => Ok((BareType::Int, Bounds::U16)),
-            "i16" => Ok((BareType::Int, Bounds::I16)),
-            "u32" => Ok((BareType::Int, Bounds::U32)),
-            "i32" => Ok((BareType::Int, Bounds::I32)),
-            "u64" => Ok((BareType::Int, Bounds::U64)),
-            "i64" => Ok((BareType::Int, Bounds::I64)),
-            "int" => Ok((BareType::Int, Bounds::None)),
-            "bool" => Ok((BareType::Bool, Bounds::None)),
-            "str" => Ok((BareType::Str, Bounds::None)),
-            "void" => Ok((BareType::Void, Bounds::None)),
+            "u8" => (
+                Some(z3::ast::Int::from_u64(0)),
+                Some(z3::ast::Int::from_u64(0xff)),
+            ),
+            "i8" => (
+                Some(z3::ast::Int::from_i64(-0x80)),
+                Some(z3::ast::Int::from_i64(0x7f)),
+            ),
+            "u16" => (
+                Some(z3::ast::Int::from_u64(0)),
+                Some(z3::ast::Int::from_u64(0xffff)),
+            ),
+            "i16" => (
+                Some(z3::ast::Int::from_i64(-0x8000)),
+                Some(z3::ast::Int::from_i64(0x7fff)),
+            ),
+            "u32" => (
+                Some(z3::ast::Int::from_u64(0)),
+                Some(z3::ast::Int::from_u64(0xffffffff)),
+            ),
+            "i32" => (
+                Some(z3::ast::Int::from_i64(-0x80000000)),
+                Some(z3::ast::Int::from_i64(0x7fffffff)),
+            ),
+            "u64" => (
+                Some(z3::ast::Int::from_u64(0)),
+                Some(z3::ast::Int::from_u64(0xffffffff_ffffffff)),
+            ),
+            "i64" => (
+                Some(z3::ast::Int::from_i64(-0x80000000_00000000)),
+                Some(z3::ast::Int::from_i64(0x7fffffff_ffffffff)),
+            ),
+            "nat" => (Some(z3::ast::Int::from_u64(0)), None),
+            "int" => (None, None),
+            _ => unreachable!("int_bounds called on non-integer type"),
+        }
+    }
+
+    fn check_value(&self, value: &Z3Value, env: &mut Env) -> Result<(), CheckError> {
+        self.check_or_assume_value(value, env, AssertMode::Assert)
+    }
+
+    fn check_or_assume_value(&self, value: &Z3Value, env: &mut Env, mode: AssertMode) -> Result<(), CheckError> {
+        match self.name.as_str() {
+            "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "nat" | "int" => {
+                let v = value.int()?;
+                let (lower, upper) = self.int_bounds();
+                if let Some(lower) = lower {
+                    env.assert_or_assume(&v.ge(&lower), "Lower bound check failed", mode)?;
+                }
+                if let Some(upper) = upper {
+                    env.assert_or_assume(&v.le(&upper), "Upper bound check failed", mode)?;
+                }
+                Ok(())
+            }
+            "bool" => {
+                value.bool()?;
+                Ok(())
+            }
+            "str" => {
+                value.string()?;
+                Ok(())
+            }
+            "void" => {
+                value.void()
+            }
             _ => Err(CheckError {
                 message: format!("Unsupported type: {}", self),
             }),
         }
     }
 
-    fn bare_type(&self) -> Result<BareType, CheckError> {
-        Ok(self.to_bare_type_and_bounds()?.0)
-    }
-
-    fn bounds(&self) -> Result<Bounds, CheckError> {
-        Ok(self.to_bare_type_and_bounds()?.1)
-    }
-
-    fn to_z3_sort(&self) -> Result<z3::Sort, CheckError> {
-        match self.bare_type()? {
-            BareType::Int => Ok(z3::Sort::int()),
-            BareType::Bool => Ok(z3::Sort::bool()),
-            BareType::Str => Ok(z3::Sort::string()),
+    fn coerce_z3_dynamic(&self, dyn_ast: &z3::ast::Dynamic) -> Result<Z3Value, CheckError> {
+        match self.name.as_str() {
+            "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "nat" | "int" => {
+                Ok(Z3Value::Int(dyn_ast.as_int().ok_or_else(|| {
+                    CheckError {
+                        message: "Expected Int type".to_owned(),
+                    }
+                })?))
+            }
+            "bool" => Ok(Z3Value::Bool(dyn_ast.as_bool().ok_or_else(|| {
+                CheckError {
+                    message: "Expected Bool type".to_owned(),
+                }
+            })?)),
+            "str" => Ok(Z3Value::Str(dyn_ast.as_string().ok_or_else(|| {
+                CheckError {
+                    message: "Expected String type".to_owned(),
+                }
+            })?)),
+            "void" => Err(CheckError {
+                message: "Void type cannot be converted from Z3 dynamic".to_owned(),
+            }),
             _ => Err(CheckError {
-                message: format!("Unsupported type for Z3 sort: {}", self),
+                message: format!("Unsupported type: {}", self),
             }),
         }
     }
 
-    fn to_z3_const(&self, name: &str) -> Result<(Z3Value, Bounds), CheckError> {
-        let (bt, bounds) = self.to_bare_type_and_bounds()?;
-        match bt {
-            BareType::Int => Ok((Z3Value::Int(z3::ast::Int::new_const(name)), bounds)),
-            BareType::Bool => Ok((Z3Value::Bool(z3::ast::Bool::new_const(name)), bounds)),
-            BareType::Str => Ok((Z3Value::Str(z3::ast::String::new_const(name)), bounds)),
+    fn check_z3_dynamic(&self, dyn_ast: &z3::ast::Dynamic, env: &mut Env) -> Result<Z3Value, CheckError> {
+        let v = self.coerce_z3_dynamic(dyn_ast)?;
+        self.check_value(&v, env)?;
+        Ok(v)
+    }
+    // fn to_bare_type_and_bounds(&self) -> Result<(BareType, Bounds), CheckError> {
+    //     match self.name.as_str() {
+    //         "u8" => Ok((BareType::Int, Bounds::U8)),
+    //         "i8" => Ok((BareType::Int, Bounds::I8)),
+    //         "u16" => Ok((BareType::Int, Bounds::U16)),
+    //         "i16" => Ok((BareType::Int, Bounds::I16)),
+    //         "u32" => Ok((BareType::Int, Bounds::U32)),
+    //         "i32" => Ok((BareType::Int, Bounds::I32)),
+    //         "u64" => Ok((BareType::Int, Bounds::U64)),
+    //         "i64" => Ok((BareType::Int, Bounds::I64)),
+    //         "int" => Ok((BareType::Int, Bounds::None)),
+    //         "bool" => Ok((BareType::Bool, Bounds::None)),
+    //         "str" => Ok((BareType::Str, Bounds::None)),
+    //         "void" => Ok((BareType::Void, Bounds::None)),
+    //         _ => Err(CheckError {
+    //             message: format!("Unsupported type: {}", self),
+    //         }),
+    //     }
+    // }
+
+    // fn bare_type(&self) -> Result<BareType, CheckError> {
+    //     Ok(self.to_bare_type_and_bounds()?.0)
+    // }
+
+    // fn bounds(&self) -> Result<Bounds, CheckError> {
+    //     Ok(self.to_bare_type_and_bounds()?.1)
+    // }
+
+    fn to_z3_sort(&self) -> Result<z3::Sort, CheckError> {
+        match self.name.as_str() {
+            "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "nat" | "int" => {
+                Ok(z3::Sort::int())
+            }
+            "bool" => Ok(z3::Sort::bool()),
+            "str" => Ok(z3::Sort::string()),
+            "void" => Err(CheckError {
+                message: "Void type cannot be converted from Z3 dynamic".to_owned(),
+            }),
             _ => Err(CheckError {
-                message: format!("Unsupported bare type: {:?}", bt),
+                message: format!("Unsupported type: {}", self),
+            }),
+        }
+    }
+
+    fn to_z3_const(&self, name: &str) -> Result<Z3Value, CheckError> {
+        match self.name.as_str() {
+            "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "nat" | "int" =>
+                Ok(Z3Value::Int(z3::ast::Int::new_const(name))),
+            "bool" => Ok(Z3Value::Bool(z3::ast::Bool::new_const(name))),
+            "str" => Ok(Z3Value::Str(z3::ast::String::new_const(name))),
+            "void" => Ok(Z3Value::Void),
+            _ => Err(CheckError {
+                message: format!("Unsupported type: {}", self),
             }),
         }
     }
@@ -426,7 +558,7 @@ impl Env {
         name: &str,
         mutable: bool,
         ty: &Type,
-    ) -> Result<(Z3Value, Bounds), CheckError> {
+    ) -> Result<Z3Value, CheckError> {
         self.vars
             .entry(name.to_owned())
             .and_modify(|info| info.replace(mutable, ty))
@@ -438,7 +570,7 @@ impl Env {
                 mutable,
                 var_type: ty.clone(),
             })
-            .z3_const_and_bounds()
+            .z3_const()
     }
 
     fn assume(&mut self, cond: z3::ast::Bool) {
@@ -458,6 +590,21 @@ impl Env {
         } else {
             self.assumptions.push(cond.clone());
             Ok(())
+        }
+    }
+
+    fn assert_or_assume(
+        &mut self,
+        cond: &z3::ast::Bool,
+        message: &str,
+        mode: AssertMode,
+    ) -> Result<(), CheckError> {
+        match mode {
+            AssertMode::Assert => self.assert(cond, message),
+            AssertMode::Assume => {
+                self.assume(cond.clone());
+                Ok(())
+            }
         }
     }
 
@@ -483,6 +630,7 @@ impl Env {
         let info = self.vars.get_mut(var).ok_or(CheckError {
             message: format!("Undefined variable: {}", var),
         })?;
+        let ty = info.var_type.clone();
         if !info.mutable {
             return Err(CheckError {
                 message: format!("Cannot assign to immutable variable: {}", var),
@@ -491,10 +639,8 @@ impl Env {
         let old_var = info.z3_const()?;
         info.mutate();
         let new_var = info.z3_const()?;
-        let bounds = info.bounds()?;
         self.assume(op.relate(old_var, new_var.clone(), value)?);
-        self.assert(&bounds.applies_to(&new_var)?, "Bounds check failed")?;
-        Ok(())
+        ty.check_value(&new_var.clone(), self)
     }
 
     fn fold_in_scope(&mut self, other: &Env) {
@@ -545,9 +691,9 @@ impl Env {
         }
 
         for (arg, value) in func.args.iter().zip(args.iter()) {
-            let (new_var, bounds) = new_env.insert_var(&arg.name, false, &arg.arg_type)?;
+            let new_var = new_env.insert_var(&arg.name, false, &arg.arg_type)?;
             new_env.assume(new_var.eq(value)?);
-            new_env.assert(&bounds.applies_to(value)?, "Bounds check failed")?;
+            arg.arg_type.check_value(&new_var, &mut new_env)?;
         }
         Ok(new_env)
     }
@@ -570,17 +716,17 @@ impl Stmt {
             }
             Stmt::Let { name, value } => {
                 let z3_value = value.z3_check(env)?;
-                let var_type = z3_value.get_bare_type().unbounded(); // don't record bounds for non-mutable variables
-                let (z3_var, bounds) = env.insert_var(name, false, &var_type)?;
+                let typ = z3_value.guess_type();
+                let z3_var = env.insert_var(name, false, &typ)?;
                 env.assume(z3_var.eq(&z3_value)?);
-                env.assert(&bounds.applies_to(&z3_value)?, "Bounds check failed")?;
+                typ.check_value(&z3_var, env)?;
                 Ok(())
             }
             Stmt::LetMut { name, typ, value } => {
                 let z3_value = value.z3_check(env)?;
-                let (z3_var, bounds) = env.insert_var(name, true, typ)?;
+                let z3_var = env.insert_var(name, true, typ)?;
                 env.assume(z3_var.eq(&z3_value)?);
-                env.assert(&bounds.applies_to(&z3_value)?, "Bounds check failed")?;
+                typ.check_value(&z3_var, env)?;
                 Ok(())
             }
             Stmt::Assign { name, op, value } => {
@@ -649,13 +795,11 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
                     .map(|a| a as &dyn z3::ast::Ast)
                     .collect::<Vec<&dyn z3::ast::Ast>>();
 
-                let (bt_ret, bounds) = user_func.return_type.to_bare_type_and_bounds()?;
                 let retvar = call_env
-                    .insert_var(&user_func.return_value, false, &user_func.return_type)?
-                    .0;
+                    .insert_var(&user_func.return_value, false, &user_func.return_type)?;
 
                 // we can assume the bounds on the return value
-                call_env.assume(bounds.applies_to(&retvar)?);
+                user_func.return_type.check_or_assume_value(&retvar, &mut call_env, AssertMode::Assume)?;
                 // we can also assume the postconditions
                 for postcondition in &user_func.postconditions {
                     let cond_z3_value = postcondition.z3_check(&mut call_env)?;
@@ -677,7 +821,7 @@ fn z3_function_call(name: &str, args: &[Z3Value], env: &mut Env) -> Result<Z3Val
 
                 // unify return value with function call
                 let ast = func_decl.apply(&z3_argrefs);
-                let val = bt_ret.check_z3_dynamic(&ast)?;
+                let val = user_func.return_type.coerce_z3_dynamic(&ast)?; // don't perform type check - this is assumed
                 env.assume(retvar.eq(&val)?);
 
                 Ok(val)
@@ -703,9 +847,15 @@ impl Expr {
                 z3_function_call(name, &z3args, env)
             }
             Expr::Semicolon(stmt, expr) => {
-                let mut new_env = env.clone();
-                stmt.z3_check(&mut new_env)?;
-                expr.z3_check(&mut new_env)
+                stmt.z3_check(env)?;
+                expr.z3_check(env)
+            }
+            Expr::Sequence { seq_type, elements } => {
+                let z3elems = elements
+                    .iter()
+                    .map(|elem| elem.z3_check(env))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Z3Value::Void) // TODO
             }
         }
     }
@@ -717,24 +867,20 @@ fn z3_check_funcdef(
 ) -> Result<CheckedFunction, CheckError> {
     let mut env = Env::new(other_funcs, &func.sees);
     for arg in &func.args {
-        env.insert_var(&arg.name, false, &arg.arg_type)?;
-        env.assume(
-            arg.arg_type
-                .bounds()?
-                .applies_to(&env.get_var(&arg.name)?)?,
-        );
+        let arg_var = env.insert_var(&arg.name, false, &arg.arg_type)?;
+        arg.arg_type.check_or_assume_value(&arg_var, &mut env, AssertMode::Assume)?;
     }
     for precondition in &func.preconditions {
         let cond_z3_value = precondition.z3_check(&mut env)?;
         env.assume(cond_z3_value.bool()?.clone());
     }
     let body_z3_value = func.body.z3_check(&mut env)?;
-    body_z3_value.type_check(&func.return_type, &mut env)?;
+    func.return_type.check_value(&body_z3_value, &mut env)?;
 
     // now check all the postconditions
     if !func.postconditions.is_empty() {
         if let Some(ret) = &func.return_name {
-            let ret_var = env.insert_var(ret, false, &func.return_type)?.0;
+            let ret_var = env.insert_var(ret, false, &func.return_type)?;
             env.assume(ret_var.eq(&body_z3_value)?);
             for postcondition in &func.postconditions {
                 let cond_z3_value = postcondition.z3_check(&mut env)?;

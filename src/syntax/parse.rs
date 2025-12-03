@@ -28,6 +28,8 @@ enum Symbol {
     CloseParen,
     OpenBrace,
     CloseBrace,
+    OpenSquare,
+    CloseSquare,
 
     Colon,
     Assign,
@@ -42,6 +44,7 @@ enum Symbol {
     Le,
     Gt,
     Ge,
+    Exclaim,
 }
 
 fn pure_whitespace1(input: &str) -> IResult<&str, &str> {
@@ -169,6 +172,8 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
         ')' => Ok((input, Symbol::CloseParen)),
         '{' => Ok((input, Symbol::OpenBrace)),
         '}' => Ok((input, Symbol::CloseBrace)),
+        '[' => Ok((input, Symbol::OpenSquare)),
+        ']' => Ok((input, Symbol::CloseSquare)),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Char,
@@ -196,6 +201,7 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "<=" => Ok((input, Symbol::Le)),
         ">" => Ok((input, Symbol::Gt)),
         ">=" => Ok((input, Symbol::Ge)),
+        "!" => Ok((input, Symbol::Exclaim)),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Char,
@@ -244,6 +250,19 @@ fn identifier(input: &str) -> IResult<&str, String> {
     }
 }
 
+fn specific_identifier(expected: &str) -> impl Fn(&str) -> IResult<&str, String> {
+    move |input: &str| {
+        let (input, word) = word(input)?;
+        match word {
+            Word::Identifier(name) if name == expected => Ok((input, name)),
+            _ => Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            ))),
+        }
+    }
+}
+
 fn variable_or_call(input: &str) -> IResult<&str, Expr> {
     let (input, name) = identifier(input)?;
     let (input, call_opt) = opt(call_suffix(name.clone())).parse(input)?;
@@ -253,9 +272,28 @@ fn variable_or_call(input: &str) -> IResult<&str, Expr> {
     }
 }
 
+fn typ_arg(input: &str) -> IResult<&str, TypeArg> {
+    let (input, type_arg) = alt((
+        map(integer, |lit| match lit {
+            Literal::I64(v) => TypeArg::I64(v),
+            Literal::U64(v) => TypeArg::U64(v),
+            _ => unreachable!(),
+        }),
+        map(typ, TypeArg::Type),
+    ))
+    .parse(input)?;
+    Ok((input, type_arg))
+}
+
 fn typ(input: &str) -> IResult<&str, Type> {
     let (input, name) = identifier(input)?;
-    Ok((input, Type { name }))
+    let (input, type_args) = opt(delimited(
+        symbol(Symbol::Lt),
+        separated_list1(symbol(Symbol::Comma), typ_arg),
+        symbol(Symbol::Gt),
+    )).parse(input)?;
+    let type_args = type_args.unwrap_or_else(Vec::new);
+    Ok((input, Type { name, type_args }))
 }
 
 fn call_suffix(name: String) -> impl Fn(&str) -> IResult<&str, Expr> {
@@ -288,6 +326,8 @@ fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
 
 fn expr_tight(input: &str) -> IResult<&str, Expr> {
     alt((
+        expr_vec,  // ahead of variable_or_call to prefer parsing vec! over treating 'vec' as a variable
+        expr_array,
         variable_or_call,
         literal,
         delimited(symbol(Symbol::OpenParen), expr, symbol(Symbol::CloseParen)),
@@ -379,6 +419,27 @@ fn expr_semicolon(input: &str) -> IResult<&str, Expr> {
         Some(expr) => Ok((input, expr)),
         None => Ok((input, first)),
     }
+}
+
+fn expr_array(input: &str) -> IResult<&str, Expr> {
+    let (input, elements) = delimited(
+        symbol(Symbol::OpenSquare),
+        separated_list0(symbol(Symbol::Comma), expr_comma),
+        symbol(Symbol::CloseSquare),
+    )
+    .parse(input)?;
+    Ok((
+        input,
+        Expr::Sequence {
+            seq_type: SeqType::Array,
+            elements,
+        },
+    ))
+}
+
+fn expr_vec(input: &str) -> IResult<&str, Expr> {
+    // vec isn't a keyword. It only has special meaning when followed by '!'
+    preceded(pair(specific_identifier("vec"), symbol(Symbol::Exclaim)), expr_array).parse(input)
 }
 
 fn keyword(expected: Word) -> impl Fn(&str) -> IResult<&str, Word> {
@@ -502,6 +563,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
             None,
             Type {
                 name: "void".to_string(),
+                type_args: Vec::new(),
             },
         ),
     };
@@ -651,6 +713,22 @@ mod test {
     fn test_function_implied_void_return() {
         let funcdef = "fn main() { println(\"Hello\") }";
         let result = super::funcdef(funcdef);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
+    }
+
+    #[test]
+    fn test_function_type_args() {
+        let input = "Vec<u64>";
+        let result = super::typ(input);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, "");
+    }
+
+    #[test]
+    fn test_vec() {
+        let expr = "vec![1, 2, 3]";
+        let result = super::expr(expr);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().0, "");
     }
