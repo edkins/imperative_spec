@@ -1,10 +1,10 @@
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Type {
     pub name: String,
     pub type_args: Vec<TypeArg>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum TypeArg {
     Type(Type),
     I64(i64),

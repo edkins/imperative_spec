@@ -439,7 +439,16 @@ fn expr_array(input: &str) -> IResult<&str, Expr> {
 
 fn expr_vec(input: &str) -> IResult<&str, Expr> {
     // vec isn't a keyword. It only has special meaning when followed by '!'
-    preceded(pair(specific_identifier("vec"), symbol(Symbol::Exclaim)), expr_array).parse(input)
+    map(
+        preceded(pair(specific_identifier("vec"), symbol(Symbol::Exclaim)), expr_array),
+        |array_expr| Expr::Sequence {
+            seq_type: SeqType::Vec,
+            elements: match array_expr {
+                Expr::Sequence { elements, .. } => elements,
+                _ => unreachable!(),
+            },
+        },
+    ).parse(input)
 }
 
 fn keyword(expected: Word) -> impl Fn(&str) -> IResult<&str, Word> {

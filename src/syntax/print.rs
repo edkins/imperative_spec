@@ -199,7 +199,7 @@ impl Display for Stmt {
             Stmt::Expr(expr) => write!(f, "{}", expr),
             Stmt::Let { name, value } => write!(f, "let {} = {}", name, value),
             Stmt::LetMut { name, typ, value } => {
-                write!(f, "let mut {}: {} = {}", name, typ.name, value)
+                write!(f, "let mut {}: {} = {}", name, typ, value)
             }
             Stmt::Assign { name, op, value } => {
                 let op_str = match op {
