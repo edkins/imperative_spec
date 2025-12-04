@@ -2,9 +2,9 @@ fn meta_condition(x: u64) -> bool {
     x <= 5
 }
 
-fn meta_proof(x: u64) -> bool
+fn meta_proof(x: u64) -> (zzz:bool)
     requires x <= 4
-    ensures meta_condition(x)
+    ensures meta_condition(x), zzz
     sees meta_condition
 {true}
 
@@ -21,7 +21,7 @@ fn helper(x: u64) -> u64
 }
 
 fn main()
-    sees condition, meta_proof
+    sees condition
 {
     helper(4);
 }
