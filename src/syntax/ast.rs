@@ -7,8 +7,7 @@ pub struct Type {
 #[derive(Clone, Eq, PartialEq)]
 pub enum TypeArg {
     Type(Type),
-    I64(i64),
-    U64(u64),
+    Bound(Bound),
 }
 
 #[derive(Clone)]
@@ -34,6 +33,7 @@ pub enum Literal {
     I64(i64),
     U64(u64),
     Str(String),
+    Bool(bool),
 }
 
 #[derive(Clone)]
@@ -74,4 +74,83 @@ pub enum Stmt {
 #[derive(Clone)]
 pub struct SourceFile {
     pub functions: Vec<FuncDef>,
+}
+
+impl Type {
+    pub fn basic(name: &str) -> Self {
+        Type {
+            name: name.to_owned(),
+            type_args: vec![],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Bound {
+    MinusInfinity,
+    PlusInfinity,
+    U64(u64),
+    I64(i64),
+}
+
+impl PartialEq for Bound {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Bound::U64(a), Bound::U64(b)) => a == b,
+            (Bound::I64(a), Bound::I64(b)) => a == b,
+            (Bound::U64(a), Bound::I64(b)) => {
+                if *b < 0 {
+                    false
+                } else {
+                    *a == (*b as u64)
+                }
+            }
+            (Bound::I64(a), Bound::U64(b)) => {
+                if *a < 0 {
+                    false
+                } else {
+                    (*a as u64) == *b
+                }
+            }
+            (Bound::MinusInfinity, Bound::MinusInfinity) => true,
+            (Bound::PlusInfinity, Bound::PlusInfinity) => true,
+            _ => false,
+        }
+    }
+}
+
+impl PartialOrd for Bound {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Bound::U64(a), Bound::U64(b)) => Some(a.cmp(b)),
+            (Bound::I64(a), Bound::I64(b)) => Some(a.cmp(b)),
+            (Bound::U64(a), Bound::I64(b)) => {
+                if *b < 0 {
+                    Some(std::cmp::Ordering::Greater)
+                } else {
+                    Some((*a).cmp(&(*b as u64)))
+                }
+            }
+            (Bound::I64(a), Bound::U64(b)) => {
+                if *a < 0 {
+                    Some(std::cmp::Ordering::Less)
+                } else {
+                    Some((*a as u64).cmp(b))
+                }
+            }
+            (Bound::MinusInfinity, Bound::MinusInfinity) => Some(std::cmp::Ordering::Equal),
+            (Bound::PlusInfinity, Bound::PlusInfinity) => Some(std::cmp::Ordering::Equal),
+            (Bound::MinusInfinity, _) => Some(std::cmp::Ordering::Less),
+            (_, Bound::MinusInfinity) => Some(std::cmp::Ordering::Greater),
+            (Bound::PlusInfinity, _) => Some(std::cmp::Ordering::Greater),
+            (_, Bound::PlusInfinity) => Some(std::cmp::Ordering::Less),
+        }
+    }
+}
+
+impl Eq for Bound {}
+impl Ord for Bound {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
 }

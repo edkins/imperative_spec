@@ -35,7 +35,7 @@ fn check_dir(dir: &str) {
                 continue;
             }
             if p.file_name().unwrap().to_str().unwrap().starts_with("f_") {
-                match check::z3check::z3_check(&source_file) {
+                match check::z3check::z3_check(&source_file, false) {
                     Ok(_) => {
                         println!("❌  Check unexpectedly succeeded");
                         success = false;
@@ -45,7 +45,7 @@ fn check_dir(dir: &str) {
                     }
                 }
             } else {
-                match check::z3check::z3_check(&source_file) {
+                match check::z3check::z3_check(&source_file, false) {
                     Err(e) => {
                         println!("❌  Check failed: {}", e);
                         success = false;
@@ -83,5 +83,6 @@ fn main() {
     let input = std::fs::read_to_string(&args.input_file).expect("Failed to read input file");
     let source_file = syntax::parse::parse_source_file(&input).expect("Failed to parse input file");
     println!("{}", source_file);
-    check::z3check::z3_check(&source_file).expect("Failed to check function");
+    println!("-------");
+    check::z3check::z3_check(&source_file, true).expect("Failed to check function");
 }

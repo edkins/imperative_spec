@@ -6,8 +6,7 @@ impl Display for TypeArg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeArg::Type(typ) => write!(f, "{}", typ),
-            TypeArg::I64(value) => write!(f, "{}", value),
-            TypeArg::U64(value) => write!(f, "{}", value),
+            TypeArg::Bound(bound) => write!(f, "{}", bound),
         }
     }
 }
@@ -35,6 +34,18 @@ impl Display for Literal {
             Literal::I64(value) => write!(f, "{}", value),
             Literal::U64(value) => write!(f, "{}", value),
             Literal::Str(value) => write!(f, "{:?}", value),
+            Literal::Bool(value) => write!(f, "{}", value),
+        }
+    }
+}
+
+impl Display for Bound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Bound::MinusInfinity => write!(f, "-∞"),
+            Bound::PlusInfinity => write!(f, "∞"),
+            Bound::U64(value) => write!(f, "{}", value),
+            Bound::I64(value) => write!(f, "{}", value),
         }
     }
 }
