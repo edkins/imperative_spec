@@ -8,6 +8,9 @@ mod syntax;
 struct Args {
     /// Input file to process (or directory name to test)
     input_file: String,
+    /// Verbose output
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
 }
 
 fn check_dir(dir: &str) {
@@ -35,7 +38,7 @@ fn check_dir(dir: &str) {
                 continue;
             }
             if p.file_name().unwrap().to_str().unwrap().starts_with("f_") {
-                match check::z3check::z3_check(&source_file, false) {
+                match check::z3check::z3_check(&source_file, 0) {
                     Ok(_) => {
                         println!("❌  Check unexpectedly succeeded");
                         success = false;
@@ -45,7 +48,7 @@ fn check_dir(dir: &str) {
                     }
                 }
             } else {
-                match check::z3check::z3_check(&source_file, false) {
+                match check::z3check::z3_check(&source_file, 0) {
                     Err(e) => {
                         println!("❌  Check failed: {}", e);
                         success = false;
@@ -84,5 +87,5 @@ fn main() {
     let source_file = syntax::parse::parse_source_file(&input).expect("Failed to parse input file");
     println!("{}", source_file);
     println!("-------");
-    check::z3check::z3_check(&source_file, true).expect("Failed to check function");
+    check::z3check::z3_check(&source_file, if args.verbose { 2 } else { 1 }).expect("Failed to check function");
 }

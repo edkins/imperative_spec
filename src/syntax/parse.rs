@@ -579,6 +579,14 @@ fn ret(input: &str) -> IResult<&str, (Option<String>, Type)> {
     alt((named_ret, unnamed_ret)).parse(input)
 }
 
+fn expr_or_empty(input: &str) -> IResult<&str, Expr> {
+    let (input, expr_opt) = opt(expr).parse(input)?;
+    match expr_opt {
+        Some(e) => Ok((input, e)),
+        None => Ok((input, Expr::Literal(Literal::Unit))),
+    }
+}
+
 fn funcdef(input: &str) -> IResult<&str, FuncDef> {
     let (input, _) = keyword(Word::Fn)(input)?;
     let (input, name) = identifier(input)?;
@@ -606,7 +614,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
     .parse(input)?;
 
     let (input, body) =
-        delimited(symbol(Symbol::OpenBrace), expr, symbol(Symbol::CloseBrace)).parse(input)?;
+        delimited(symbol(Symbol::OpenBrace), expr_or_empty, symbol(Symbol::CloseBrace)).parse(input)?;
 
     let (return_name, return_type) = match return_stuff {
         Some((rn, rt)) => (rn, rt),

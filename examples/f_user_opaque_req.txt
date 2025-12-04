@@ -1,0 +1,22 @@
+fn condition(x: u64) -> bool {
+    1 <= x && x <= 5
+}
+
+fn cond4()
+    ensures condition(4)
+    sees condition
+{
+}
+
+fn helper(x: u64) -> u64
+    requires condition(x)
+    sees condition
+{
+    x + x
+}
+
+fn main()
+{
+    cond4();
+    helper(6);
+}

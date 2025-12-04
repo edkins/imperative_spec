@@ -13,7 +13,7 @@ use crate::{
     },
     syntax::ast::*,
 };
-use z3::{self, SortDiffers, ast::Dynamic};
+use z3::{self, SortDiffers, ast::{Ast, Dynamic}};
 
 #[derive(Debug)]
 pub struct CheckError {
@@ -71,6 +71,7 @@ struct Env {
     assumptions: Vec<z3::ast::Bool>,
     side_effects: HashSet<String>,
     other_funcs: Vec<CheckedFunction>,
+    verbosity: u8,
 }
 
 impl CheckedFunction {
@@ -164,9 +165,7 @@ impl Type {
             }
             "bool" => Ok(z3::Sort::bool()),
             "str" => Ok(z3::Sort::string()),
-            "void" => Err(CheckError {
-                message: "Void type cannot be converted from Z3 dynamic".to_owned(),
-            }),
+            "void" => Ok(z3::Sort::int()), // using int as dummy sort for void
             _ => Err(CheckError {
                 message: format!("Unsupported type for to_z3_sort: {}", self),
             }),
@@ -204,7 +203,7 @@ impl Type {
 }
 
 impl Env {
-    fn new(other_funcs: &[CheckedFunction], sees: &[String]) -> Self {
+    fn new(other_funcs: &[CheckedFunction], sees: &[String], verbosity: u8) -> Self {
         let mut other_funcs_visible = Vec::new();
         for func in other_funcs {
             // Hide the body of functions not in 'sees'
@@ -215,6 +214,7 @@ impl Env {
             assumptions: Vec::new(),
             side_effects: HashSet::new(),
             other_funcs: other_funcs_visible,
+            verbosity,
         }
     }
 
@@ -244,10 +244,27 @@ impl Env {
     }
 
     fn assume(&mut self, cond: z3::ast::Bool) {
+        if self.verbosity >= 2 {
+            println!("Assuming: {}", cond);
+        }
         self.assumptions.push(cond);
+        if self.verbosity >= 2 {
+            self.check_consistency();
+        }
+    }
+
+    fn check_consistency(&self) {
+        let solver = z3::Solver::new();
+        for assumption in &self.assumptions {
+            solver.assert(assumption);
+        }
+        println!("  status: {:?}", solver.check());
     }
 
     fn assert(&mut self, cond: &z3::ast::Bool, message: &str) -> Result<(), CheckError> {
+        if self.verbosity >= 2 {
+            println!("Asserting: {}", cond);
+        }
         let solver = z3::Solver::new();
         for assumption in &self.assumptions {
             solver.assert(assumption);
@@ -304,7 +321,10 @@ impl Env {
                 .entry(name.clone())
                 .and_modify(|var| {
                     assert!(other_var.version >= var.version);
+                    assert!(other_var.max_version >= var.max_version);
                     var.version = other_var.version;
+                    var.max_version = other_var.max_version;
+                    var.hidden = other_var.hidden;
                 })
                 .or_insert_with(|| {
                     let mut other_clone = other_var.clone();
@@ -319,6 +339,17 @@ impl Env {
         for assumption in &other.assumptions {
             if !self.assumptions.contains(assumption) {
                 self.assumptions.push(assumption.clone());
+            }
+        }
+
+        if self.verbosity >= 2 {
+            println!("Folding in scope:");
+            self.check_consistency();
+            for (name, var) in &self.vars {
+                println!(
+                    "  var {} (version {}, max_version {}, hidden {})",
+                    name, var.version, var.max_version, var.hidden
+                );
             }
         }
     }
@@ -391,19 +422,19 @@ impl TStmt {
 
 fn int(x: &Dynamic) -> Result<z3::ast::Int, CheckError> {
     x.as_int().ok_or_else(|| CheckError {
-        message: "Expected Int type".to_owned(),
+        message: format!("Expected Int type, got {:?} of sort {:?}", x, x.get_sort()),
     })
 }
 
 fn boolean(x: &Dynamic) -> Result<z3::ast::Bool, CheckError> {
     x.as_bool().ok_or_else(|| CheckError {
-        message: "Expected Bool type".to_owned(),
+        message: format!("Expected Bool type, got {:?} of sort {:?}", x, x.get_sort()),
     })
 }
 
 fn string(x: &Dynamic) -> Result<z3::ast::String, CheckError> {
     x.as_string().ok_or_else(|| CheckError {
-        message: "Expected String type".to_owned(),
+        message: format!("Expected String type, got {:?} of sort {:?}", x, x.get_sort()),
     })
 }
 
@@ -589,8 +620,12 @@ fn mk_z3_sequence(elems: Vec<Dynamic>, elem_type: &Type) -> Result<Dynamic, Chec
 fn z3_check_funcdef(
     func: &TFuncDef,
     other_funcs: &[CheckedFunction],
+    verbosity: u8,
 ) -> Result<CheckedFunction, CheckError> {
-    let mut env = Env::new(other_funcs, &func.sees);
+    if verbosity >= 2 {
+        println!("\n\n\nChecking function: {}. New env.", func.name);
+    }
+    let mut env = Env::new(other_funcs, &func.sees, verbosity);
     for arg in &func.args {
         let _arg_var = env.insert_var(&arg.name, false, &arg.arg_type)?;
         // arg.arg_type.check_or_assume_value(&arg_var, &mut env, AssertMode::Assume)?;
@@ -625,16 +660,16 @@ fn z3_check_funcdef(
     })
 }
 
-pub fn z3_check(source_file: &SourceFile, verbose: bool) -> Result<(), CheckError> {
+pub fn z3_check(source_file: &SourceFile, verbosity: u8) -> Result<(), CheckError> {
     let tsource_file = source_file.type_check()?;
-    if verbose {
+    if verbosity >= 1 {
         println!("{}", tsource_file);
         println!("Type checking passed. Starting Z3 checking...");
     }
 
     let mut other_funcs = vec![];
     for func in &tsource_file.functions {
-        let checked_func = z3_check_funcdef(func, &other_funcs)?;
+        let checked_func = z3_check_funcdef(func, &other_funcs, verbosity)?;
         other_funcs.push(checked_func);
     }
     Ok(())
