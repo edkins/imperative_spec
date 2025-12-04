@@ -235,7 +235,8 @@ fn boolean(input: &str) -> IResult<&str, Literal> {
     alt((
         value(Literal::Bool(true), keyword(Word::True)),
         value(Literal::Bool(false), keyword(Word::False)),
-    )).parse(input)
+    ))
+    .parse(input)
 }
 
 fn literal(input: &str) -> IResult<&str, Expr> {
@@ -302,7 +303,8 @@ fn typ(input: &str) -> IResult<&str, Type> {
         symbol(Symbol::Lt),
         separated_list1(symbol(Symbol::Comma), typ_arg),
         symbol(Symbol::Gt),
-    )).parse(input)?;
+    ))
+    .parse(input)?;
     let type_args = type_args.unwrap_or_else(Vec::new);
     Ok((input, Type { name, type_args }))
 }
@@ -439,10 +441,7 @@ fn expr_array(input: &str) -> IResult<&str, Expr> {
         symbol(Symbol::CloseSquare),
     )
     .parse(input)?;
-    Ok((
-        input,
-        Expr::Sequence(elements)
-    ))
+    Ok((input, Expr::Sequence(elements)))
 }
 
 // fn expr_vec(input: &str) -> IResult<&str, Expr> {

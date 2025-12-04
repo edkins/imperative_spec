@@ -128,7 +128,7 @@ impl Expr {
                 writeln!(f, ";")?;
                 expr.fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
                 strength.close_brace(f, BindingStrength::Semicolon)
-            },
+            }
             Expr::Sequence(elements) => {
                 write!(f, "[")?;
                 for (i, element) in elements.iter().enumerate() {

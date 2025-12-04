@@ -4,12 +4,25 @@ use crate::syntax::ast::{Arg, Literal, Type, TypeArg};
 pub enum TExpr {
     Unit,
     Literal(Literal),
-    Variable { name: String, typ: Type },
+    Variable {
+        name: String,
+        typ: Type,
+    },
     Semicolon(Box<TStmt>, Box<TExpr>),
-    FunctionCall { name: String, args: Vec<TExpr>, return_type: Type },
-    Sequence {elements: Vec<TExpr>, elem_type: Type},
+    FunctionCall {
+        name: String,
+        args: Vec<TExpr>,
+        return_type: Type,
+    },
+    Sequence {
+        elements: Vec<TExpr>,
+        elem_type: Type,
+    },
     EmptySequence,
-    Lambda { args: Vec<Arg>, body: Box<TExpr> },
+    Lambda {
+        args: Vec<Arg>,
+        body: Box<TExpr>,
+    },
 }
 
 #[derive(Clone)]
@@ -46,17 +59,16 @@ impl TExpr {
             TExpr::Variable { typ, .. } => typ.clone(),
             TExpr::Semicolon(_, expr) => expr.typ(),
             TExpr::FunctionCall { return_type, .. } => return_type.clone(),
-            TExpr::Sequence { elem_type, .. } => {
-                Type {
-                    name: "Seq".to_owned(),
-                    type_args: vec![TypeArg::Type(elem_type.clone())]
-                }
-            }
-            TExpr::EmptySequence => {
-                Type::basic("EmptySeq")
-            }
+            TExpr::Sequence { elem_type, .. } => Type {
+                name: "Seq".to_owned(),
+                type_args: vec![TypeArg::Type(elem_type.clone())],
+            },
+            TExpr::EmptySequence => Type::basic("EmptySeq"),
             TExpr::Lambda { args, body } => {
-                let arg_types = args.iter().map(|arg| arg.arg_type.clone()).collect::<Vec<_>>();
+                let arg_types = args
+                    .iter()
+                    .map(|arg| arg.arg_type.clone())
+                    .collect::<Vec<_>>();
                 Type::lambda(&arg_types, &body.typ())
             }
         }
@@ -84,7 +96,7 @@ impl std::fmt::Display for TExpr {
             TExpr::Unit => write!(f, "()"),
             TExpr::Literal(lit) => write!(f, "{}", lit),
             TExpr::Variable { name, typ } => write!(f, "{}:{}", name, typ),
-            TExpr::Semicolon( stmt, expr) => write!(f, "{};\n{}", stmt, expr),
+            TExpr::Semicolon(stmt, expr) => write!(f, "{};\n{}", stmt, expr),
             TExpr::FunctionCall { name, args, .. } => {
                 write!(f, "{}(", name)?;
                 for (i, arg) in args.iter().enumerate() {
@@ -124,7 +136,12 @@ impl std::fmt::Display for TStmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TStmt::Expr(expr) => write!(f, "{}", expr),
-            TStmt::Let { name, typ, mutable, value } => {
+            TStmt::Let {
+                name,
+                typ,
+                mutable,
+                value,
+            } => {
                 if *mutable {
                     write!(f, "let mut {}: {} = {}", name, typ, value)
                 } else {

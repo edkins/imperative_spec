@@ -6,7 +6,13 @@ use std::{
     str::FromStr,
 };
 
-use crate::{check::{ztype_ast::{TExpr, TFuncDef, TStmt}, ztype_inference::TypeError}, syntax::ast::*};
+use crate::{
+    check::{
+        ztype_ast::{TExpr, TFuncDef, TStmt},
+        ztype_inference::TypeError,
+    },
+    syntax::ast::*,
+};
 use z3::{self, SortDiffers, ast::Dynamic};
 
 #[derive(Debug)]
@@ -173,49 +179,49 @@ impl CheckedVar {
 }
 
 // impl Z3Value {
-    // fn guess_type(&self) -> Type {
-    //     match self {
-    //         Z3Value::Void => Type {
-    //             name: "void".to_owned(),
-    //             type_args: vec![],
-    //         },
-    //         Z3Value::Bool(_) => Type {
-    //             name: "bool".to_owned(),
-    //             type_args: vec![],
-    //         },
-    //         Z3Value::Int(_) => Type {
-    //             name: "int".to_owned(),
-    //             type_args: vec![],
-    //         },
-    //         Z3Value::Str(_) => Type {
-    //             name: "str".to_owned(),
-    //             type_args: vec![],
-    //         },
-    //         Z3Value::Array(_, e) => Type {
-    //             name: "Array".to_owned(),
-    //             type_args: vec![TypeArg::Type(e.clone())],
-    //         },
-    //         Z3Value::Vec(_, e) => Type {
-    //             name: "Vec".to_owned(),
-    //             type_args: vec![TypeArg::Type(e.clone())],
-    //         },
-    //         Z3Value::UnknownSeq(xs) => Type {
-    //             name: "UnknownSeq".to_owned(),
-    //             type_args: vec![TypeArg::Type(xs[0].guess_type())],
-    //         }
-    //     }
-    // }
+// fn guess_type(&self) -> Type {
+//     match self {
+//         Z3Value::Void => Type {
+//             name: "void".to_owned(),
+//             type_args: vec![],
+//         },
+//         Z3Value::Bool(_) => Type {
+//             name: "bool".to_owned(),
+//             type_args: vec![],
+//         },
+//         Z3Value::Int(_) => Type {
+//             name: "int".to_owned(),
+//             type_args: vec![],
+//         },
+//         Z3Value::Str(_) => Type {
+//             name: "str".to_owned(),
+//             type_args: vec![],
+//         },
+//         Z3Value::Array(_, e) => Type {
+//             name: "Array".to_owned(),
+//             type_args: vec![TypeArg::Type(e.clone())],
+//         },
+//         Z3Value::Vec(_, e) => Type {
+//             name: "Vec".to_owned(),
+//             type_args: vec![TypeArg::Type(e.clone())],
+//         },
+//         Z3Value::UnknownSeq(xs) => Type {
+//             name: "UnknownSeq".to_owned(),
+//             type_args: vec![TypeArg::Type(xs[0].guess_type())],
+//         }
+//     }
+// }
 
-    // fn len(&self) -> Result<z3::ast::Int, CheckError> {
-    //     match self {
-    //         Z3Value::Vec(seq, _) => Ok(seq.length()),
-    //         Z3Value::Array(seq, _) => Ok(seq.length()),
-    //         Z3Value::UnknownSeq(xs) => Ok(z3::ast::Int::from_u64(xs.len() as u64)),
-    //         _ => Err(CheckError {
-    //             message: "Length can only be obtained for Vec or Array types".to_owned(),
-    //         }),
-    //     }
-    // }
+// fn len(&self) -> Result<z3::ast::Int, CheckError> {
+//     match self {
+//         Z3Value::Vec(seq, _) => Ok(seq.length()),
+//         Z3Value::Array(seq, _) => Ok(seq.length()),
+//         Z3Value::UnknownSeq(xs) => Ok(z3::ast::Int::from_u64(xs.len() as u64)),
+//         _ => Err(CheckError {
+//             message: "Length can only be obtained for Vec or Array types".to_owned(),
+//         }),
+//     }
+// }
 
 //     fn eq(&self, other: &Z3Value) -> Result<z3::ast::Bool, CheckError> {
 //         match (self, other) {
@@ -471,12 +477,7 @@ impl Env {
         }
     }
 
-    fn insert_var(
-        &mut self,
-        name: &str,
-        mutable: bool,
-        ty: &Type,
-    ) -> Result<Dynamic, CheckError> {
+    fn insert_var(&mut self, name: &str, mutable: bool, ty: &Type) -> Result<Dynamic, CheckError> {
         self.vars
             .entry(name.to_owned())
             .and_modify(|info| info.replace(mutable, ty))
@@ -617,7 +618,12 @@ impl TStmt {
                 expr.z3_check(env)?;
                 Ok(())
             }
-            TStmt::Let { name, typ, value, mutable } => {
+            TStmt::Let {
+                name,
+                typ,
+                value,
+                mutable,
+            } => {
                 let z3_value = value.z3_check(env)?;
                 let z3_var = env.insert_var(name, *mutable, typ)?;
                 // typ.check_value(&z3_var, env)?;
@@ -705,27 +711,20 @@ fn void_value() -> Dynamic {
     z3::ast::Int::from_i64(0).into()
 }
 
-fn z3_function_call(name: &str, args: &[Dynamic], _return_type: &Type, env: &mut Env) -> Result<Dynamic, CheckError> {
+fn z3_function_call(
+    name: &str,
+    args: &[Dynamic],
+    _return_type: &Type,
+    env: &mut Env,
+) -> Result<Dynamic, CheckError> {
     // TODO: check return type is correct?
     match (name, args.len()) {
-        ("==", 2) => {
-            Ok(args[0].safe_eq(&args[1])?.into())
-        }
-        ("!=", 2) => {
-            Ok(args[0].safe_eq(&args[1])?.not().into())
-        }
-        ("<", 2) => {
-            Ok(int(&args[0])?.lt(&int(&args[1])?).into())
-        }
-        ("<=", 2) => {
-            Ok(int(&args[0])?.le(&int(&args[1])?).into())
-        }
-        (">", 2) => {
-            Ok(int(&args[0])?.gt(&int(&args[1])?).into())
-        }
-        (">=", 2) => {
-            Ok(int(&args[0])?.ge(&int(&args[1])?).into())
-        }
+        ("==", 2) => Ok(args[0].safe_eq(&args[1])?.into()),
+        ("!=", 2) => Ok(args[0].safe_eq(&args[1])?.not().into()),
+        ("<", 2) => Ok(int(&args[0])?.lt(&int(&args[1])?).into()),
+        ("<=", 2) => Ok(int(&args[0])?.le(&int(&args[1])?).into()),
+        (">", 2) => Ok(int(&args[0])?.gt(&int(&args[1])?).into()),
+        (">=", 2) => Ok(int(&args[0])?.ge(&int(&args[1])?).into()),
         ("+", 2) => Ok((int(&args[0])? + int(&args[1])?).into()),
         ("-", 2) => Ok((int(&args[0])? - int(&args[1])?).into()),
         ("&&", 2) => Ok((boolean(&args[0])? & boolean(&args[1])?).into()),
@@ -786,8 +785,8 @@ fn z3_function_call(name: &str, args: &[Dynamic], _return_type: &Type, env: &mut
                     .map(|a| a as &dyn z3::ast::Ast)
                     .collect::<Vec<&dyn z3::ast::Ast>>();
 
-                let retvar = call_env
-                    .insert_var(&user_func.return_value, false, &user_func.return_type)?;
+                let retvar =
+                    call_env.insert_var(&user_func.return_value, false, &user_func.return_type)?;
 
                 // we can assume the postconditions (which includes type info e.g. bounds on the return value)
                 for postcondition in &user_func.postconditions {
@@ -827,8 +826,12 @@ impl TExpr {
         match self {
             TExpr::Unit => Ok(void_value()),
             TExpr::Literal(literal) => literal.z3_check(),
-            TExpr::Variable{name, ..} => env.get_var(name),
-            TExpr::FunctionCall { name, args, return_type } => {
+            TExpr::Variable { name, .. } => env.get_var(name),
+            TExpr::FunctionCall {
+                name,
+                args,
+                return_type,
+            } => {
                 let z3args = args
                     .iter()
                     .map(|arg| arg.z3_check(env))
@@ -839,7 +842,10 @@ impl TExpr {
                 stmt.z3_check(env)?;
                 expr.z3_check(env)
             }
-            TExpr::Sequence{elements, elem_type} => {
+            TExpr::Sequence {
+                elements,
+                elem_type,
+            } => {
                 let z3elems = elements
                     .iter()
                     .map(|elem| elem.z3_check(env))
@@ -851,7 +857,7 @@ impl TExpr {
             }
             TExpr::Lambda { args, body } => {
                 let mut new_env = env.clone();
-                let mut vars:Vec<Dynamic> = vec![];
+                let mut vars: Vec<Dynamic> = vec![];
                 for arg in args {
                     vars.push(new_env.insert_var(&arg.name, false, &arg.arg_type)?);
                 }
@@ -872,7 +878,7 @@ fn mk_z3_sequence(elems: Vec<Dynamic>, elem_type: &Type) -> Result<Dynamic, Chec
         return Ok(z3::ast::Seq::empty(&elem_type.to_z3_sort()?).into());
     }
     // let elem_sort = elem_type.to_z3_sort()?;
-    let mut z3_units:Vec<z3::ast::Seq> = Vec::new();
+    let mut z3_units: Vec<z3::ast::Seq> = Vec::new();
     for elem in elems {
         z3_units.push(z3::ast::Seq::unit(&elem));
     }
