@@ -783,6 +783,8 @@ fn z3_function_call(name: &str, args: &[Dynamic], return_type: &Type, env: &mut 
         }
         ("+", 2) => Ok((int(&args[0])? + int(&args[1])?).into()),
         ("-", 2) => Ok((int(&args[0])? - int(&args[1])?).into()),
+        ("&&", 2) => Ok((boolean(&args[0])? & boolean(&args[1])?).into()),
+        ("||", 2) => Ok((boolean(&args[0])? | boolean(&args[1])?).into()),
         ("assert", 1) => {
             let bool_arg = boolean(&args[0])?;
             env.assert(&bool_arg, "Assertion failed")?;
@@ -805,6 +807,27 @@ fn z3_function_call(name: &str, args: &[Dynamic], return_type: &Type, env: &mut 
             })?;
             let index_arg = int(&args[1])?;
             Ok(seq_arg.nth(&index_arg).into())
+        }
+        ("seq_map", 2) => {
+            let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
+                message: "Expected Seq type for seq_map".to_owned(),
+            })?;
+            let lambda_arg = args[1].as_array().ok_or_else(|| CheckError {
+                message: "Expected Lambda type for seq_map".to_owned(),
+            })?;
+            let mapped_seq = seq_arg.map(&lambda_arg);
+            Ok(mapped_seq.into())
+        }
+        ("seq_foldl", 3) => {
+            let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
+                message: "Expected Seq type for seq_foldl".to_owned(),
+            })?;
+            let lambda_arg = args[1].as_array().ok_or_else(|| CheckError {
+                message: "Expected Lambda type for seq_foldl".to_owned(),
+            })?;
+            let init_arg = &args[2];
+            let folded_value = seq_arg.fold_left(&lambda_arg, init_arg);
+            Ok(folded_value.into())
         }
         _ => {
             if let Some(user_func) = env.other_funcs.iter().find(|f| f.name == name) {
@@ -880,6 +903,20 @@ impl TExpr {
             }
             TExpr::EmptySequence => {
                 unreachable!("We shouldn't see EmptySequence past type checking");
+            }
+            TExpr::Lambda { args, body } => {
+                let mut new_env = env.clone();
+                let mut vars:Vec<Dynamic> = vec![];
+                for arg in args {
+                    vars.push(new_env.insert_var(&arg.name, false, &arg.arg_type)?);
+                }
+                let arg_refs = vars
+                    .iter()
+                    .map(|a| a as &dyn z3::ast::Ast)
+                    .collect::<Vec<&dyn z3::ast::Ast>>();
+                let z3_body = body.z3_check(&mut new_env)?;
+                let array = z3::ast::lambda_const(&arg_refs, &z3_body);
+                Ok(array.into())
             }
         }
     }

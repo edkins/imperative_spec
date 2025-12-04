@@ -1,4 +1,4 @@
-use crate::syntax::ast::{Arg, AssignOp, Literal, Type, TypeArg};
+use crate::syntax::ast::{Arg, Literal, Type, TypeArg};
 
 #[derive(Clone)]
 pub enum TExpr {
@@ -9,6 +9,7 @@ pub enum TExpr {
     FunctionCall { name: String, args: Vec<TExpr>, return_type: Type },
     Sequence {elements: Vec<TExpr>, elem_type: Type},
     EmptySequence,
+    Lambda { args: Vec<Arg>, body: Box<TExpr> },
 }
 
 #[derive(Clone)]
@@ -53,6 +54,10 @@ impl TExpr {
             }
             TExpr::EmptySequence => {
                 Type::basic("EmptySeq")
+            }
+            TExpr::Lambda { args, body } => {
+                let arg_types = args.iter().map(|arg| arg.arg_type.clone()).collect::<Vec<_>>();
+                Type::lambda(&arg_types, &body.typ())
             }
         }
     }
@@ -101,6 +106,16 @@ impl std::fmt::Display for TExpr {
                 write!(f, "]")
             }
             TExpr::EmptySequence => write!(f, "[]"),
+            TExpr::Lambda { args, body } => {
+                write!(f, "|")?;
+                for (i, arg) in args.iter().enumerate() {
+                    write!(f, "{}: {}", arg.name, arg.arg_type)?;
+                    if i != args.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "| {}", body)
+            }
         }
     }
 }

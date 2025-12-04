@@ -6,4 +6,4 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5.53", features = ["derive"] }
 nom = "8.0.0"
-z3 = "0.19.5"
+z3 = { path = "./z3.rs/z3"}

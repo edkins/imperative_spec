@@ -30,6 +30,12 @@ enum TOverloadedFunc {
     Equality,
 }
 
+#[derive(Clone, Hash, Eq, PartialEq)]
+enum LambdaDef {
+    Type(Type),
+    And,
+}
+
 #[derive(Clone)]
 struct TEnv {
     variables: HashMap<String, Type>,
@@ -171,13 +177,6 @@ impl Type {
         self.name.as_str() == "bool" && self.type_args.is_empty()
     }
 
-    // pub fn bounded_int(lower: Bound, upper: Bound) -> Type {
-    //     Type {
-    //         name: "BoundedInt".to_owned(),
-    //         type_args: vec![TypeArg::Bound(lower), TypeArg::Bound(upper)],
-    //     }
-    // }
-
     pub fn canonicalize(&self, name: &str) -> Result<(Type,Vec<TExpr>),TypeError> {
         self.canonicalize_expr(|typ| TExpr::Variable { name: name.to_owned(), typ })
     }
@@ -194,16 +193,6 @@ impl Type {
     
     pub fn canonicalize_expr(&self, expr_factory: impl Fn(Type)->TExpr) -> Result<(Type,Vec<TExpr>),TypeError> {
         match self.name.as_str() {
-            // "i8" => Type::bounded_int(Bound::I64(-128), Bound::I64(127)),
-            // "i16" => Type::bounded_int(Bound::I64(-32768), Bound::I64(32767)),
-            // "i32" => Type::bounded_int(Bound::I64(-2147483648), Bound::I64(2147483647)),
-            // "i64" => Type::bounded_int(Bound::I64(std::i64::MIN), Bound::I64(std::i64::MAX)),
-            // "u8" => Type::bounded_int(Bound::U64(0), Bound::U64(255)),
-            // "u16" => Type::bounded_int(Bound::U64(0), Bound::U64(65535)),
-            // "u32" => Type::bounded_int(Bound::U64(0), Bound::U64(4294967295)),
-            // "u64" => Type::bounded_int(Bound::U64(0), Bound::U64(std::u64::MAX)),
-            // "int" => Type::bounded_int(Bound::MinusInfinity, Bound::PlusInfinity),
-            // "nat" => Type::bounded_int(Bound::U64(0), Bound::PlusInfinity),
             "i8" | "i16" | "i32" | "i64" |
             "u8" | "u16" | "u32" | "u64" |
             "int" | "nat" => {
@@ -216,11 +205,17 @@ impl Type {
                 Ok((self.clone(), vec![]))
             },
             "Vec" => {
-                let (elem_type, _) = self.one_type_arg()?.canonicalize("TODO")?; // TODO: per-element conditions
-                Ok((Type {
+                let elem_type = self.one_type_arg()?;
+                let (type_lambda, elem_canon) = TEnv::type_lambda(&elem_type)?;
+                let vec_type = Type {
                     name: "Seq".to_owned(),
-                    type_args: vec![TypeArg::Type(elem_type.clone())]
-                }, vec![]))
+                    type_args: vec![TypeArg::Type(elem_canon.clone())]
+                };
+                let conds = if let Some(type_lambda) = type_lambda {
+                    let array_expr = expr_factory(vec_type.clone());
+                    vec![array_expr.seq_all(&type_lambda)?]
+                } else { vec![] };
+                Ok((vec_type, conds))
             },
             "Array" => {
                 let (elem_type, size) = self.one_type_one_u64_args()?;
@@ -248,27 +243,12 @@ impl Type {
                 message: format!("Cannot canonicalize user-defined type {}", self),
             })
         }
+
     }
 
-    // pub fn int_bounds(&self) -> (Bound, Bound) {
-    //     match self.name.as_str() {
-    //         "int" => {
-    //             if self.type_args.len() != 2 {
-    //                 panic!("BoundedInt type must have exactly 2 type arguments");
-    //             }
-    //             let lower = match &self.type_args[0] {
-    //                 TypeArg::Bound(b) => *b,
-    //                 _ => panic!("Expected Bound type argument for lower bound"),
-    //             };
-    //             let upper = match &self.type_args[1] {
-    //                 TypeArg::Bound(b) => *b,
-    //                 _ => panic!("Expected Bound type argument for upper bound"),
-    //             };
-    //             (lower, upper)
-    //         }
-    //         _ => panic!("Not an integer type"),
-    //     }
-    // }
+    pub fn z3_array_name(&self) -> String {
+        format!("__array__{}", self)
+    }
 
     pub fn is_subtype_of(&self, other: &Type) -> bool {
         if self == other {
@@ -353,6 +333,53 @@ impl Type {
             }
         };
         Ok((t, b.as_u64()?))
+    }
+
+    pub fn lambda(arg_types: &[Type], ret_type: &Type) -> Type {
+        Type {
+            name: "Lambda".to_owned(),
+            type_args: arg_types.iter().cloned().map(TypeArg::Type).chain(std::iter::once(TypeArg::Type(ret_type.clone()))).collect(),
+        }
+    }
+
+    pub fn call_lambda(&self, arg_types: &[Type]) -> Result<Type, TypeError> {
+        if self.name != "Lambda" {
+            return Err(TypeError {
+                message: format!("Type {} is not a Lambda", self),
+            });
+        }
+        if self.type_args.is_empty() {
+            return Err(TypeError {
+                message: format!("Lambda type {} has no type arguments", self),
+            });
+        }
+        if self.type_args.len() != arg_types.len() + 1 {
+            return Err(TypeError {
+                message: format!("Lambda type {} expects {} arguments, got {}", self, self.type_args.len() - 1, arg_types.len()),
+            });
+        }
+        for (i, arg_type) in arg_types.iter().enumerate() {
+            match &self.type_args[i] {
+                TypeArg::Type(t) => {
+                    if !arg_type.is_subtype_of(t) {
+                        return Err(TypeError {
+                            message: format!("Lambda argument type mismatch: expected {}, got {}", t, arg_type),
+                        });
+                    }
+                }
+                _ => {
+                    return Err(TypeError {
+                        message: format!("Lambda argument type {} is not a Type", self),
+                    });
+                }
+            }
+        }
+        match &self.type_args[self.type_args.len() - 1] {
+            TypeArg::Type(t) => Ok(t.clone()),
+            _ => Err(TypeError {
+                message: format!("Lambda return type of {} is not a Type", self),
+            }),
+        }
     }
 
     // pub fn two_bounds_args(&self) -> Result<(Bound, Bound), TypeError> {
@@ -474,6 +501,19 @@ impl TExpr {
         })
     }
 
+    pub fn and(&self, other: &TExpr) -> Result<TExpr, TypeError> {
+        if !self.typ().is_bool() || !other.typ().is_bool() {
+            return Err(TypeError {
+                message: format!("Cannot perform logical and on non-bool types {} and {}", self.typ(), other.typ()),
+            });
+        }
+        Ok(TExpr::FunctionCall {
+            name: "&&".to_owned(),
+            args: vec![self.clone(), other.clone()],
+            return_type: Type::basic("bool"),
+        })
+    }
+
     pub fn seq_at(&self, index: &TExpr) -> Result<TExpr, TypeError> {
         if self.typ().name != "Seq" {
             return Err(TypeError {
@@ -499,6 +539,64 @@ impl TExpr {
             args: vec![self.clone()],
             return_type: Type::basic("int"),
         })
+    }
+
+    pub fn seq_map(&self, f: &TExpr) -> Result<TExpr, TypeError> {
+        if self.typ().name != "Seq" {
+            return Err(TypeError {
+                message: format!("seq_map called on non-sequence type {}", self.typ()),
+            });
+        }
+        let elem_type = self.typ().one_type_arg()?;
+        let ret_type = f.typ().call_lambda(&[elem_type])?;
+        Ok(TExpr::FunctionCall {
+            name: "seq_map".to_owned(),
+            args: vec![self.clone(), f.clone()],
+            return_type: Type {
+                name: "Seq".to_owned(),
+                type_args: vec![TypeArg::Type(ret_type)],
+            },
+        })
+    }
+
+    pub fn seq_foldl(&self, f: &TExpr, initial: &TExpr) -> Result<TExpr, TypeError> {
+        if self.typ().name != "Seq" {
+            return Err(TypeError {
+                message: format!("seq_foldl called on non-sequence type {}", self.typ()),
+            });
+        }
+        let elem_type = self.typ().one_type_arg()?;
+        let return_type = f.typ().call_lambda(&[initial.typ(), elem_type.clone()])?;
+        if !initial.typ().is_subtype_of(&return_type) {
+            return Err(TypeError {
+                message: format!("Initial value type {} is not compatible with fold function return type {}", initial.typ(), return_type),
+            });
+        }
+        if !f.typ().call_lambda(&[return_type.clone(), elem_type.clone()])?.is_subtype_of(&return_type) {
+            return Err(TypeError {
+                message: format!("Fold function return type {} is not compatible with fold function argument type {}", return_type, elem_type),
+            });
+        }
+        Ok(TExpr::FunctionCall {
+            name: "seq_foldl".to_owned(),
+            args: vec![self.clone(), f.clone(), initial.clone()],
+            return_type,
+        })
+    }
+
+    pub fn seq_all(&self, predicate: &TExpr) -> Result<TExpr, TypeError> {
+        if self.typ().name != "Seq" {
+            return Err(TypeError {
+                message: format!("seq_all called on non-sequence type {}", self.typ()),
+            });
+        }
+        let elem_type = self.typ().one_type_arg()?;
+        if !predicate.typ().call_lambda(&[elem_type.clone()])?.is_subtype_of(&Type::basic("bool")) {
+            return Err(TypeError {
+                message: format!("Predicate function does not return bool for element type {}", elem_type),
+            });
+        }
+        self.seq_map(predicate)?.seq_foldl(&TEnv::and_lambda(), &TExpr::Literal(Literal::Bool(true)))
     }
 }
 
@@ -706,6 +804,111 @@ impl FuncDef {
     }
 }
 
+impl TEnv {
+    fn has_visible_variable(&self, name: &str) -> bool {
+        self.variables.contains_key(name)
+    }
+
+    fn and_lambda() -> TExpr {
+        let var0 = "__item0__".to_owned();
+        let var1 = "__item1__".to_owned();
+        let v0 = TExpr::Variable { name: var0.clone(), typ: Type::basic("bool") };
+        let v1 = TExpr::Variable { name: var1.clone(), typ: Type::basic("bool") };
+        let body = v0.and(&v1).unwrap();
+
+        TExpr::Lambda {
+            args: vec![Arg{name: var0.clone(), arg_type: Type::basic("bool")}, Arg{name: var1.clone(), arg_type: Type::basic("bool")}],
+            body: Box::new(body)
+        }
+    }
+
+    fn type_lambda(typ: &Type) -> Result<(Option<TExpr>, Type), TypeError> {
+        let (canon, conds) = typ.canonicalize("__item__")?;
+        if conds.is_empty() {
+            return Ok((None, canon));
+        }
+        Ok((Some(TExpr::Lambda {
+            args: vec![Arg{name: "__item__".to_owned(), arg_type: canon.clone()}],
+            body: Box::new(big_and(&conds)?)
+        }), canon))
+    }
+
+    /// Returns a helper lambda representing the logical `and` operation
+    /// Used when checking `Vec`s.
+    /// let __and__ = |__item0__:bool, __item1__:bool| __item0__ && __item1__;
+    fn define_and(&mut self) -> Result<(Vec<TStmt>, TExpr), TypeError> {
+        let name = "__and__".to_owned();
+        let mut stmts = vec![];
+        let typ = Type::lambda(&[Type::basic("bool"), Type::basic("bool")], &Type::basic("bool"));
+        if !self.has_visible_variable(&name) {
+            let var0 = "__item0__".to_owned();
+            let var1 = "__item1__".to_owned();
+            assert!(!self.has_visible_variable(&var0));
+            assert!(!self.has_visible_variable(&var1));
+            let v0 = TExpr::Variable { name: var0.clone(), typ: Type::basic("bool") };
+            let v1 = TExpr::Variable { name: var1.clone(), typ: Type::basic("bool") };
+            let body = v0.and(&v1)?;
+
+            stmts.push(
+                TStmt::Let{
+                    name: name.clone(),
+                    typ: typ.clone(),
+                    mutable: false,
+                    value:  TExpr::Lambda {
+                    args: vec![Arg{name: var0.clone(), arg_type: Type::basic("bool")}, Arg{name: var1.clone(), arg_type: Type::basic("bool")}],
+                    body: Box::new(body)
+                }}
+            );
+            self.variables.insert(name.clone(), typ.clone());
+        }
+        Ok((stmts, TExpr::Variable { name, typ }))
+    }
+
+    /// Return none if there are no conditions set on the type
+    /// This is used to define a Lambda on the canonical type,
+    /// which checks the conditions on the more restrictive type.
+    /// e.g.
+    /// let __type_i8__ = |__item__:int| __item__ >= -128 && __item__ <= 127;
+    fn define_type(&mut self, typ: &Type) -> Result<Option<(Vec<TStmt>, TExpr)>, TypeError> {
+        let name = format!("__type_{}__", typ);
+        let mut stmts = vec![];
+        let var = "__item__".to_owned();
+        let (canon, conds) = typ.canonicalize(&var)?;
+        if conds.is_empty() {
+            return Ok(None);
+        }
+        let typ = Type::lambda(&[canon], &Type::basic("bool"));
+        if !self.has_visible_variable(&name) {
+            assert!(!self.has_visible_variable(&var));
+
+            stmts.push(
+                TStmt::Let{
+                    name: name.clone(),
+                    typ: typ.clone(),
+                    mutable: false,
+                    value: TExpr::Lambda {
+                        args: vec![Arg{name: var.clone(), arg_type: typ.clone()}],
+                        body: Box::new(big_and(&conds)?)
+                    }
+                }
+            );
+            self.variables.insert(name.clone(), typ.clone());
+        }
+        Ok(Some((stmts, TExpr::Variable { name, typ })))
+    }
+}
+
+pub fn big_and(exprs: &[TExpr]) -> Result<TExpr, TypeError> {
+    if exprs.is_empty() {
+        return Ok(TExpr::Literal(Literal::Bool(true)));
+    }
+    let mut result = exprs[0].clone();
+    for e in &exprs[1..] {
+        result = result.and(e)?;
+    }
+    Ok(result)
+}
+
 impl SourceFile {
     pub fn type_check(&self) -> Result<TSourceFile, TypeError> {
         let mut env = TEnv {
@@ -719,6 +922,7 @@ impl SourceFile {
         let int_binop = TFunc::new(&[tint.clone(), tint.clone()], &tint);
         let print_sig = TFunc::new(&[Type::basic("str")], &Type::basic("void"));
         let assert_sig = TFunc::new(&[tbool.clone()], &Type::basic("void"));
+        let bool_op = TFunc::new(&[tbool.clone(), tbool.clone()], &tbool);
         env.functions.insert("==".to_owned(), TOverloadedFunc::Equality);
         env.functions.insert("!=".to_owned(), TOverloadedFunc::Equality);
         env.functions.insert("<".to_owned(), TOverloadedFunc::Finite(vec![int_rel.clone()]));
@@ -727,6 +931,7 @@ impl SourceFile {
         env.functions.insert(">=".to_owned(), TOverloadedFunc::Finite(vec![int_rel.clone()]));
         env.functions.insert("+".to_owned(), TOverloadedFunc::Finite(vec![int_binop.clone()]));
         env.functions.insert("-".to_owned(), TOverloadedFunc::Finite(vec![int_binop.clone()]));
+        env.functions.insert("&&".to_owned(), TOverloadedFunc::Finite(vec![bool_op.clone()]));
         env.functions.insert("println".to_owned(), TOverloadedFunc::Finite(vec![print_sig.clone()]));
         env.functions.insert("assert".to_owned(), TOverloadedFunc::Finite(vec![assert_sig.clone()]));
         // env.functions.insert("seq_at".to_owned(), TOverloadedFunc::Finite(vec![]));

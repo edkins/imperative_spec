@@ -1,10 +1,10 @@
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct Type {
     pub name: String,
     pub type_args: Vec<TypeArg>,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum TypeArg {
     Type(Type),
     Bound(Bound),
@@ -85,7 +85,7 @@ impl Type {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash)]
 pub enum Bound {
     MinusInfinity,
     PlusInfinity,
