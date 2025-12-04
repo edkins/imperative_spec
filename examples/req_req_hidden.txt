@@ -1,0 +1,27 @@
+fn meta_condition(x: u64) -> bool {
+    x <= 5
+}
+
+fn meta_proof(x: u64) -> bool
+    requires x <= 4
+    ensures meta_condition(x)
+    sees meta_condition
+{true}
+
+fn condition(x: u64) -> bool
+    requires meta_condition(x)
+{
+    1 <= x
+}
+
+fn helper(x: u64) -> u64
+    requires x <= 4, meta_proof(x), condition(x)
+{
+    x + x
+}
+
+fn main()
+    sees condition, meta_proof
+{
+    helper(4);
+}

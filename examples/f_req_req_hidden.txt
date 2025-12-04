@@ -9,8 +9,7 @@ fn condition(x: u64) -> bool
 }
 
 fn helper(x: u64) -> u64
-    requires meta_condition(x), condition(x)
-    sees meta_condition
+    requires x <= 4, condition(x)
 {
     x + x
 }
@@ -18,5 +17,5 @@ fn helper(x: u64) -> u64
 fn main()
     sees condition, meta_condition
 {
-    helper(5);
+    helper(4);
 }
