@@ -50,7 +50,6 @@ impl Display for Bound {
     }
 }
 
-#[allow(dead_code)]
 #[derive(PartialEq, PartialOrd, Ord, Eq, Clone, Copy)]
 enum BindingStrength {
     NeverBracket,
@@ -58,7 +57,6 @@ enum BindingStrength {
     Comma,
     Comparison,
     PlusMinus,
-    AlwaysBracket,
 }
 
 impl BindingStrength {

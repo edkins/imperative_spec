@@ -51,50 +51,7 @@ impl TFunc {
             return_postconditions: vec![],
         }
     }
-
-    // fn compatible_with(&self, ret_type: Option<&Type>, n_args: usize) -> bool {
-    //     if self.arg_types.len() != n_args {
-    //         return false;
-    //     }
-    //     if let Some(ret_type) = ret_type {
-    //         &self.return_type == ret_type
-    //     } else {
-    //         true
-    //     }
-    // }
 }
-
-// #[derive(Clone)]
-// enum ArgTypeInfo {
-//     None,
-//     Some(Type),
-//     Ambiguous,
-// }
-
-// impl ArgTypeInfo {
-//     fn push_type(&mut self, new_type: Type) {
-//         match self {
-//             ArgTypeInfo::None => {
-//                 *self = ArgTypeInfo::Some(new_type);
-//             }
-//             ArgTypeInfo::Some(existing_type) => {
-//                 if *existing_type != new_type {
-//                     *self = ArgTypeInfo::Ambiguous;
-//                 }
-//             }
-//             ArgTypeInfo::Ambiguous => {
-//                 // Do nothing, already ambiguous
-//             }
-//         }
-//     }
-
-//     fn to_option(&self) -> Option<Type> {
-//         match self {
-//             ArgTypeInfo::Some(t) => Some(t.clone()),
-//             _ => None,
-//         }
-//     }
-// }
 
 fn lookup_in_bounds(name: &str) -> (Bound, Bound) {
     match name {
