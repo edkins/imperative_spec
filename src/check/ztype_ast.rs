@@ -2,6 +2,7 @@ use crate::syntax::ast::{Arg, AssignOp, Literal, Type, TypeArg};
 
 #[derive(Clone)]
 pub enum TExpr {
+    Unit,
     Literal(Literal),
     Variable { name: String, typ: Type },
     Semicolon(Box<TStmt>, Box<TExpr>),
@@ -39,6 +40,7 @@ impl Literal {
 impl TExpr {
     pub fn typ(&self) -> Type {
         match self {
+            TExpr::Unit => Type::basic("void"),
             TExpr::Literal(lit) => lit.typ(),
             TExpr::Variable { typ, .. } => typ.clone(),
             TExpr::Semicolon(_, expr) => expr.typ(),
@@ -74,6 +76,7 @@ pub struct TSourceFile {
 impl std::fmt::Display for TExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TExpr::Unit => write!(f, "()"),
             TExpr::Literal(lit) => write!(f, "{}", lit),
             TExpr::Variable { name, typ } => write!(f, "{}:{}", name, typ),
             TExpr::Semicolon( stmt, expr) => write!(f, "{}; {}", stmt, expr),

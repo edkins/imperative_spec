@@ -843,8 +843,9 @@ fn z3_function_call(name: &str, args: &[Dynamic], return_type: &Type, env: &mut 
 impl TExpr {
     fn z3_check(&self, env: &mut Env) -> Result<Dynamic, CheckError> {
         match self {
+            TExpr::Unit => Ok(void_value()),
             TExpr::Literal(literal) => literal.z3_check(),
-            TExpr::Variable{name, typ} => env.get_var(name),
+            TExpr::Variable{name, ..} => env.get_var(name),
             TExpr::FunctionCall { name, args, return_type } => {
                 let z3args = args
                     .iter()

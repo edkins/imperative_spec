@@ -36,6 +36,8 @@ struct TEnv {
     functions: HashMap<String, TOverloadedFunc>,
 }
 
+const MAX_UNROLL:u64 = 64;
+
 impl TFunc {
     fn new(args_types: &[Type], return_type: &Type) -> Self {
         TFunc {
@@ -107,8 +109,8 @@ fn lookup_in_bounds(name: &str) -> (Bound, Bound) {
     }
 }
 
-fn bounds_to_expr(lower: Bound, upper: Bound, name: &str) -> Vec<TExpr> {
-    let var_expr = TExpr::Variable { name: name.to_owned(), typ: Type::basic("int") };
+fn bounds_to_expr(lower: Bound, upper: Bound, expr_factory: impl Fn(Type) -> TExpr) -> Vec<TExpr> {
+    let var_expr = expr_factory(Type::basic("int"));
     let mut result = vec![];
     match lower {
         Bound::MinusInfinity => {},
@@ -141,6 +143,25 @@ fn bounds_to_expr(lower: Bound, upper: Bound, name: &str) -> Vec<TExpr> {
     result
 }
 
+impl Bound {
+    pub fn as_u64(&self) -> Result<u64, TypeError> {
+        match self {
+            Bound::I64(i) => {
+                if *i < 0 {
+                    return Err(TypeError {
+                        message: format!("Bound {} is negative, cannot convert to u64", self),
+                    });
+                }
+                Ok(*i as u64)
+            }
+            Bound::U64(u) => Ok(*u),
+            _ => Err(TypeError {
+                message: format!("Bound {} is not a u64", self),
+            }),
+        }
+    }
+}
+
 impl Type {
     pub fn is_int(&self) -> bool {
         self.name.as_str() == "int" && self.type_args.is_empty()
@@ -158,6 +179,20 @@ impl Type {
     // }
 
     pub fn canonicalize(&self, name: &str) -> Result<(Type,Vec<TExpr>),TypeError> {
+        self.canonicalize_expr(|typ| TExpr::Variable { name: name.to_owned(), typ })
+    }
+
+    pub fn canonicalize_dummy(&self) -> Result<Type, TypeError> {
+        let (canon, _) = self.canonicalize_expr(|_| TExpr::Unit)?;
+        Ok(canon)
+    }
+
+    pub fn canonicalize_const(&self, expr: &TExpr) -> Result<Vec<TExpr>, TypeError> {
+        let (_, conditions) = self.canonicalize_expr(|_| expr.clone())?;
+        Ok(conditions)
+    }
+    
+    pub fn canonicalize_expr(&self, expr_factory: impl Fn(Type)->TExpr) -> Result<(Type,Vec<TExpr>),TypeError> {
         match self.name.as_str() {
             // "i8" => Type::bounded_int(Bound::I64(-128), Bound::I64(127)),
             // "i16" => Type::bounded_int(Bound::I64(-32768), Bound::I64(32767)),
@@ -174,7 +209,7 @@ impl Type {
             "int" | "nat" => {
                 self.no_type_args()?;
                 let (lower, upper) = lookup_in_bounds(self.name.as_str());
-                Ok((Type::basic("int"), bounds_to_expr(lower, upper, name)))
+                Ok((Type::basic("int"), bounds_to_expr(lower, upper, expr_factory)))
             }
             "str" | "bool" | "void" => {
                 self.no_type_args()?;
@@ -187,6 +222,28 @@ impl Type {
                     type_args: vec![TypeArg::Type(elem_type.clone())]
                 }, vec![]))
             },
+            "Array" => {
+                let (elem_type, size) = self.one_type_one_u64_args()?;
+                if size > MAX_UNROLL {
+                    return Err(TypeError {
+                        message: format!("Array size {} exceeds maximum unroll limit {}", size, MAX_UNROLL),
+                    });
+                }
+                let elem_canon = elem_type.canonicalize_dummy()?;
+                let array_type = Type {
+                    name: "Seq".to_owned(),
+                    type_args: vec![TypeArg::Type(elem_canon)]
+                };
+                let array_expr = expr_factory(self.clone());
+                let mut conditions = vec![array_expr.seq_len()?.eq(&TExpr::Literal(Literal::U64(size)))?];
+                for i in 0..size {
+                    let index_expr = TExpr::Literal(Literal::U64(i));
+                    let elem_expr = array_expr.seq_at(&index_expr)?;
+                    let condition = elem_type.canonicalize_const(&elem_expr)?;
+                    conditions.extend_from_slice(&condition);
+                }
+                Ok((array_type, conditions))
+            }
             _ => Err(TypeError {
                 message: format!("Cannot canonicalize user-defined type {}", self),
             })
@@ -271,6 +328,31 @@ impl Type {
                 message: format!("Type argument of {} is not a Type", self),
             }),
         }
+    }
+
+    pub fn one_type_one_u64_args(&self) -> Result<(Type, u64), TypeError> {
+        if self.type_args.len() != 2 {
+            return Err(TypeError {
+                message: format!("Type {} should have exactly two type arguments", self),
+            });
+        }
+        let t = match &self.type_args[0] {
+            TypeArg::Type(t) => t.clone(),
+            _ => {
+                return Err(TypeError {
+                    message: format!("First type argument of {} is not a Type", self),
+                });
+            }
+        };
+        let b = match &self.type_args[1] {
+            TypeArg::Bound(b) => *b,
+            _ => {
+                return Err(TypeError {
+                    message: format!("Second type argument of {} is not a Bound", self),
+                });
+            }
+        };
+        Ok((t, b.as_u64()?))
     }
 
     // pub fn two_bounds_args(&self) -> Result<(Bound, Bound), TypeError> {
@@ -378,6 +460,44 @@ impl TExpr {
             name: "assert".to_owned(),
             args: vec![self.clone()],
             return_type: Type::basic("void"),
+        })
+    }
+
+    pub fn eq(&self, other: &TExpr) -> Result<TExpr, TypeError> {
+        let eqt = self.typ().find_equality_type(&other.typ())?;
+        let left = self.coerce(&eqt)?;
+        let right = other.coerce(&eqt)?;
+        Ok(TExpr::FunctionCall {
+            name: "==".to_owned(),
+            args: vec![left, right],
+            return_type: Type::basic("bool"),
+        })
+    }
+
+    pub fn seq_at(&self, index: &TExpr) -> Result<TExpr, TypeError> {
+        if self.typ().name != "Seq" {
+            return Err(TypeError {
+                message: format!("seq_at called on non-sequence type {}", self.typ()),
+            });
+        }
+        let elem_type = self.typ().one_type_arg()?;
+        Ok(TExpr::FunctionCall {
+            name: "seq_at".to_owned(),
+            args: vec![self.clone(), index.clone()],
+            return_type: elem_type,
+        })
+    }
+
+    pub fn seq_len(&self) -> Result<TExpr, TypeError> {
+        if self.typ().name != "Seq" {
+            return Err(TypeError {
+                message: format!("seq_len called on non-sequence type {}", self.typ()),
+            });
+        }
+        Ok(TExpr::FunctionCall {
+            name: "seq_len".to_owned(),
+            args: vec![self.clone()],
+            return_type: Type::basic("int"),
         })
     }
 }
@@ -607,6 +727,8 @@ impl SourceFile {
         env.functions.insert("-".to_owned(), TOverloadedFunc::Finite(vec![int_binop.clone()]));
         env.functions.insert("println".to_owned(), TOverloadedFunc::Finite(vec![print_sig.clone()]));
         env.functions.insert("assert".to_owned(), TOverloadedFunc::Finite(vec![assert_sig.clone()]));
+        // env.functions.insert("seq_at".to_owned(), TOverloadedFunc::Finite(vec![]));
+        // env.functions.insert("seq_len".to_owned(), TOverloadedFunc::Finite(vec![]));
         
         for func in &self.functions {
             let overload = func.decl()?;
