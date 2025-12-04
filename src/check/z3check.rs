@@ -322,9 +322,7 @@ impl Env {
                 .and_modify(|var| {
                     assert!(other_var.version >= var.version);
                     assert!(other_var.max_version >= var.max_version);
-                    var.version = other_var.version;
                     var.max_version = other_var.max_version;
-                    var.hidden = other_var.hidden;
                 })
                 .or_insert_with(|| {
                     let mut other_clone = other_var.clone();
