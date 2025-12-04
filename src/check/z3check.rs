@@ -435,12 +435,13 @@ impl Type {
 
     fn to_z3_const(&self, name: &str) -> Result<Dynamic, CheckError> {
         match self.name.as_str() {
-            "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "nat" | "int" =>
-                Ok(z3::ast::Int::new_const(name).into()),
+            // "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "nat" | "int" =>
+            //     Ok(z3::ast::Int::new_const(name).into()),
+            "int" => Ok(z3::ast::Int::new_const(name).into()),
             "bool" => Ok(z3::ast::Bool::new_const(name).into()),
             "str" => Ok(z3::ast::String::new_const(name).into()),
             "void" => Ok(void_value()),
-            "Vec" => {
+            "Seq" => {
                 let elem_type = self.one_type_arg()?;
                 let elem_sort = elem_type.to_z3_sort()?;
                 Ok(z3::ast::Seq::new_const(name, &elem_sort).into())
@@ -791,6 +792,19 @@ fn z3_function_call(name: &str, args: &[Dynamic], return_type: &Type, env: &mut 
             string(&args[0])?;
             env.prints();
             Ok(void_value())
+        }
+        ("seq_len", 1) => {
+            let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
+                message: "Expected Seq type for seq_len".to_owned(),
+            })?;
+            Ok(seq_arg.length().into())
+        }
+        ("seq_at", 2) => {
+            let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
+                message: "Expected Seq type for seq_at".to_owned(),
+            })?;
+            let index_arg = int(&args[1])?;
+            Ok(seq_arg.nth(&index_arg).into())
         }
         _ => {
             if let Some(user_func) = env.other_funcs.iter().find(|f| f.name == name) {

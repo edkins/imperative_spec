@@ -79,7 +79,7 @@ impl std::fmt::Display for TExpr {
             TExpr::Unit => write!(f, "()"),
             TExpr::Literal(lit) => write!(f, "{}", lit),
             TExpr::Variable { name, typ } => write!(f, "{}:{}", name, typ),
-            TExpr::Semicolon( stmt, expr) => write!(f, "{}; {}", stmt, expr),
+            TExpr::Semicolon( stmt, expr) => write!(f, "{};\n{}", stmt, expr),
             TExpr::FunctionCall { name, args, .. } => {
                 write!(f, "{}(", name)?;
                 for (i, arg) in args.iter().enumerate() {

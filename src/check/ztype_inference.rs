@@ -1,6 +1,6 @@
 use std::collections::{HashMap};
 
-use crate::syntax::ast::{AssignOp, Bound, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg};
+use crate::syntax::ast::{Arg, AssignOp, Bound, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg};
 use crate::check::ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt, display_texprs};
 
 #[derive(Debug)]
@@ -234,7 +234,7 @@ impl Type {
                     name: "Seq".to_owned(),
                     type_args: vec![TypeArg::Type(elem_canon)]
                 };
-                let array_expr = expr_factory(self.clone());
+                let array_expr = expr_factory(array_type.clone());
                 let mut conditions = vec![array_expr.seq_len()?.eq(&TExpr::Literal(Literal::U64(size)))?];
                 for i in 0..size {
                     let index_expr = TExpr::Literal(Literal::U64(i));
@@ -613,7 +613,7 @@ impl Stmt {
                     });
                 }
                 env.variables.insert(name.clone(), typ.clone());
-                let mut stmts = vec![TStmt::Let { name: name.clone(), typ: typ.clone(), mutable: true, value: tvalue }];
+                let mut stmts = vec![TStmt::Let { name: name.clone(), typ: tcanon, mutable: true, value: tvalue }];
                 for assertion in tcond {
                     stmts.push(assertion.as_assertion());
                 }
@@ -691,9 +691,11 @@ impl FuncDef {
         let mut post_args_env = args_env.clone();
         post_args_env.variables.insert(decl.return_name.clone(), decl.return_type.clone());
         postconditions.extend(self.postconditions.iter().map(|p| p.type_check(&mut post_args_env)).collect::<Result<Vec<TExpr>, TypeError>>()?);
+
+        let args = self.args.iter().zip(&decl.arg_types).map(|(a, t)| Arg{name: a.name.clone(), arg_type: t.clone()}).collect::<Vec<_>>();
         Ok(TFuncDef {
             name: self.name.clone(),
-            args: self.args.clone(),
+            args,
             return_type: decl.return_type.clone(),
             return_name: decl.return_name.clone(),
             preconditions,
