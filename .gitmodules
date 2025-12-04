@@ -1,0 +1,3 @@
+[submodule "z3.rs"]
+	path = z3.rs
+	url = git@github.com:edkins/z3.rs.git
