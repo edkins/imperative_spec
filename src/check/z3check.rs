@@ -619,7 +619,7 @@ impl TStmt {
             }
             TStmt::Let { name, typ, value, mutable } => {
                 let z3_value = value.z3_check(env)?;
-                let z3_var = env.insert_var(name, *mutable, &typ)?;
+                let z3_var = env.insert_var(name, *mutable, typ)?;
                 // typ.check_value(&z3_var, env)?;
                 env.assume(z3_var.safe_eq(&z3_value)?);
                 Ok(())
@@ -751,7 +751,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], _return_type: &Type, env: &mut
                 message: "Expected Seq type for seq_at".to_owned(),
             })?;
             let index_arg = int(&args[1])?;
-            Ok(seq_arg.nth(&index_arg).into())
+            Ok(seq_arg.nth(&index_arg))
         }
         ("seq_map", 2) => {
             let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
@@ -772,7 +772,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], _return_type: &Type, env: &mut
             })?;
             let init_arg = &args[2];
             let folded_value = seq_arg.fold_left(&lambda_arg, init_arg);
-            Ok(folded_value.into())
+            Ok(folded_value)
         }
         _ => {
             if let Some(user_func) = env.other_funcs.iter().find(|f| f.name == name) {

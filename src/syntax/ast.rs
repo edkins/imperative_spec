@@ -1,10 +1,10 @@
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Type {
     pub name: String,
     pub type_args: Vec<TypeArg>,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum TypeArg {
     Type(Type),
     Bound(Bound),
@@ -85,7 +85,7 @@ impl Type {
     }
 }
 
-#[derive(Clone, Copy, Hash)]
+#[derive(Clone, Copy)]
 pub enum Bound {
     MinusInfinity,
     PlusInfinity,
@@ -121,36 +121,37 @@ impl PartialEq for Bound {
 
 impl PartialOrd for Bound {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Bound {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
-            (Bound::U64(a), Bound::U64(b)) => Some(a.cmp(b)),
-            (Bound::I64(a), Bound::I64(b)) => Some(a.cmp(b)),
+            (Bound::U64(a), Bound::U64(b)) => a.cmp(b),
+            (Bound::I64(a), Bound::I64(b)) => a.cmp(b),
             (Bound::U64(a), Bound::I64(b)) => {
                 if *b < 0 {
-                    Some(std::cmp::Ordering::Greater)
+                    std::cmp::Ordering::Greater
                 } else {
-                    Some((*a).cmp(&(*b as u64)))
+                    (*a).cmp(&(*b as u64))
                 }
             }
             (Bound::I64(a), Bound::U64(b)) => {
                 if *a < 0 {
-                    Some(std::cmp::Ordering::Less)
+                    std::cmp::Ordering::Less
                 } else {
-                    Some((*a as u64).cmp(b))
+                    (*a as u64).cmp(b)
                 }
             }
-            (Bound::MinusInfinity, Bound::MinusInfinity) => Some(std::cmp::Ordering::Equal),
-            (Bound::PlusInfinity, Bound::PlusInfinity) => Some(std::cmp::Ordering::Equal),
-            (Bound::MinusInfinity, _) => Some(std::cmp::Ordering::Less),
-            (_, Bound::MinusInfinity) => Some(std::cmp::Ordering::Greater),
-            (Bound::PlusInfinity, _) => Some(std::cmp::Ordering::Greater),
-            (_, Bound::PlusInfinity) => Some(std::cmp::Ordering::Less),
+            (Bound::MinusInfinity, Bound::MinusInfinity) => std::cmp::Ordering::Equal,
+            (Bound::PlusInfinity, Bound::PlusInfinity) => std::cmp::Ordering::Equal,
+            (Bound::MinusInfinity, _) => std::cmp::Ordering::Less,
+            (_, Bound::MinusInfinity) => std::cmp::Ordering::Greater,
+            (Bound::PlusInfinity, _) => std::cmp::Ordering::Greater,
+            (_, Bound::PlusInfinity) => std::cmp::Ordering::Less,
         }
     }
 }
 
 impl Eq for Bound {}
-impl Ord for Bound {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}

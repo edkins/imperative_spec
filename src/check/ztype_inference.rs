@@ -1,4 +1,5 @@
 use std::collections::{HashMap};
+use std::slice::from_ref;
 
 use crate::syntax::ast::{Arg, AssignOp, Bound, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg};
 use crate::check::ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt, display_texprs};
@@ -98,11 +99,11 @@ fn lookup_in_bounds(name: &str) -> (Bound, Bound) {
         "i8" => (Bound::I64(-128), Bound::I64(127)),
         "i16" => (Bound::I64(-32768), Bound::I64(32767)),
         "i32" => (Bound::I64(-2147483648), Bound::I64(2147483647)),
-        "i64" => (Bound::I64(std::i64::MIN), Bound::I64(std::i64::MAX)),
+        "i64" => (Bound::I64(i64::MIN), Bound::I64(i64::MAX)),
         "u8" => (Bound::U64(0), Bound::U64(255)),
         "u16" => (Bound::U64(0), Bound::U64(65535)),
         "u32" => (Bound::U64(0), Bound::U64(4294967295)),
-        "u64" => (Bound::U64(0), Bound::U64(std::u64::MAX)),
+        "u64" => (Bound::U64(0), Bound::U64(u64::MAX)),
         "int" => (Bound::MinusInfinity, Bound::PlusInfinity),
         "nat" => (Bound::U64(0), Bound::PlusInfinity),
         _ => panic!("Unknown type for bounds lookup: {}", name),
@@ -581,7 +582,7 @@ impl TExpr {
             });
         }
         let elem_type = self.typ().one_type_arg()?;
-        if !predicate.typ().call_lambda(&[elem_type.clone()])?.is_subtype_of(&Type::basic("bool")) {
+        if !predicate.typ().call_lambda(from_ref(&elem_type))?.is_subtype_of(&Type::basic("bool")) {
             return Err(TypeError {
                 message: format!("Predicate function does not return bool for element type {}", elem_type),
             });
@@ -622,7 +623,7 @@ impl Expr {
                 Ok(texpr)
             }
             Expr::Sequence(elems) => {
-                if elems.len() == 0 {
+                if elems.is_empty() {
                     Ok(TExpr::EmptySequence)
                 } else {
                     let telems = elems.iter().map(|e| e.type_check(env)).collect::<Result<Vec<TExpr>, TypeError>>()?;
@@ -642,7 +643,7 @@ impl Expr {
 }
 
 impl AssignOp {
-    fn to_expr(
+    fn mk_expr(
         &self,
         left: &TExpr,
         right: &TExpr,
@@ -714,7 +715,7 @@ impl Stmt {
                 })?;
                 let (var_type, assertions) = var_typex.canonicalize(name)?;
                 let old_left = TExpr::Variable { name: name.clone(), typ: var_type.clone() };
-                let result = op.to_expr(&old_left, &tvalue)?;
+                let result = op.mk_expr(&old_left, &tvalue)?;
                 if !result.typ().is_subtype_of(&var_type) {
                     return Err(TypeError {
                         message: format!("Resulting type of assignment does not match variable type for {}", name),
@@ -843,7 +844,7 @@ impl SourceFile {
         let int_rel = TFunc::new(&[tint.clone(), tint.clone()], &tbool);
         let int_binop = TFunc::new(&[tint.clone(), tint.clone()], &tint);
         let print_sig = TFunc::new(&[Type::basic("str")], &Type::basic("void"));
-        let assert_sig = TFunc::new(&[tbool.clone()], &Type::basic("void"));
+        let assert_sig = TFunc::new(from_ref(&tbool), &Type::basic("void"));
         let bool_op = TFunc::new(&[tbool.clone(), tbool.clone()], &tbool);
         env.functions.insert("==".to_owned(), TOverloadedFunc::Equality);
         env.functions.insert("!=".to_owned(), TOverloadedFunc::Equality);
