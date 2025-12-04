@@ -34,6 +34,7 @@ pub enum Literal {
     U64(u64),
     Str(String),
     Bool(bool),
+    Unit,
 }
 
 #[derive(Clone)]

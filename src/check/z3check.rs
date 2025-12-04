@@ -147,6 +147,7 @@ impl CheckedVar {
 impl Literal {
     fn z3_check(&self) -> Result<Dynamic, CheckError> {
         match self {
+            Literal::Unit => Ok(void_value()),
             Literal::I64(value) => Ok(z3::ast::Int::from_i64(*value).into()),
             Literal::U64(value) => Ok(z3::ast::Int::from_u64(*value).into()),
             Literal::Str(value) => Ok(z3::ast::String::from_str(value)?.into()),
@@ -524,7 +525,6 @@ fn z3_function_call(
 impl TExpr {
     fn z3_check(&self, env: &mut Env) -> Result<Dynamic, CheckError> {
         match self {
-            TExpr::Unit => Ok(void_value()),
             TExpr::Literal(literal) => literal.z3_check(),
             TExpr::Variable { name, .. } => env.get_var(name),
             TExpr::FunctionCall {

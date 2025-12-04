@@ -139,7 +139,7 @@ impl Type {
     }
 
     pub fn canonicalize_dummy(&self) -> Result<Type, TypeError> {
-        let (canon, _) = self.canonicalize_expr(|_| TExpr::Unit)?;
+        let (canon, _) = self.canonicalize_expr(|_| TExpr::Literal(Literal::Unit))?;
         Ok(canon)
     }
 
@@ -999,6 +999,10 @@ impl SourceFile {
         );
         env.functions.insert(
             "&&".to_owned(),
+            TOverloadedFunc::Finite(vec![bool_op.clone()]),
+        );
+        env.functions.insert(
+            "||".to_owned(),
             TOverloadedFunc::Finite(vec![bool_op.clone()]),
         );
         env.functions.insert(

@@ -47,6 +47,8 @@ enum Symbol {
     Gt,
     Ge,
     Exclaim,
+    LogicalAnd,
+    LogicalOr,
 }
 
 fn pure_whitespace1(input: &str) -> IResult<&str, &str> {
@@ -186,7 +188,7 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
 }
 
 fn is_multi_char_sym(ch: char) -> bool {
-    matches!(ch, ':' | '=' | '+' | '-' | '<' | '>' | '!')
+    matches!(ch, ':' | '=' | '+' | '-' | '<' | '>' | '!' | '&' | '|')
 }
 
 fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
@@ -206,6 +208,8 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         ">" => Ok((input, Symbol::Gt)),
         ">=" => Ok((input, Symbol::Ge)),
         "!" => Ok((input, Symbol::Exclaim)),
+        "&&" => Ok((input, Symbol::LogicalAnd)),
+        "||" => Ok((input, Symbol::LogicalOr)),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Char,
@@ -329,7 +333,8 @@ fn call_suffix(name: String) -> impl Fn(&str) -> IResult<&str, Expr> {
 fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
     move |input: &str| {
         let (input, _) = symbol(Symbol::Semicolon)(input)?;
-        let (input, right) = expr(input)?;
+        let (input, right) = opt(expr).parse(input)?;
+        let right = right.unwrap_or_else(||Expr::Literal(Literal::Unit));
         Ok((
             input,
             Expr::Semicolon(Box::new(Stmt::Expr(left.clone())), Box::new(right)),
@@ -421,8 +426,38 @@ fn expr_cmp(input: &str) -> IResult<&str, Expr> {
     }
 }
 
+fn expr_conjunction(input: &str) -> IResult<&str, Expr> {
+    let (input, expr) = expr_cmp(input)?;
+    let (input, and_opt) = opt(preceded(symbol(Symbol::LogicalAnd), expr_conjunction)).parse(input)?;
+    match and_opt {
+        Some(rhs) => {
+            let new_expr = Expr::FunctionCall {
+                name: "&&".to_owned(),
+                args: vec![expr, rhs],
+            };
+            Ok((input, new_expr))
+        }
+        None => Ok((input, expr)),
+    }
+}
+
+fn expr_disjunction(input: &str) -> IResult<&str, Expr> {
+    let (input, expr) = expr_conjunction(input)?;
+    let (input, or_opt) = opt(preceded(symbol(Symbol::LogicalOr), expr_disjunction)).parse(input)?;
+    match or_opt {
+        Some(rhs) => {
+            let new_expr = Expr::FunctionCall {
+                name: "||".to_owned(),
+                args: vec![expr, rhs],
+            };
+            Ok((input, new_expr))
+        }
+        None => Ok((input, expr)),
+    }
+}
+
 fn expr_comma(input: &str) -> IResult<&str, Expr> {
-    expr_cmp(input)
+    expr_disjunction(input)
 }
 
 fn expr_semicolon(input: &str) -> IResult<&str, Expr> {
