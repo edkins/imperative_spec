@@ -30,12 +30,6 @@ enum TOverloadedFunc {
     Equality,
 }
 
-#[derive(Clone, Hash, Eq, PartialEq)]
-enum LambdaDef {
-    Type(Type),
-    And,
-}
-
 #[derive(Clone)]
 struct TEnv {
     variables: HashMap<String, Type>,
@@ -244,10 +238,6 @@ impl Type {
             })
         }
 
-    }
-
-    pub fn z3_array_name(&self) -> String {
-        format!("__array__{}", self)
     }
 
     pub fn is_subtype_of(&self, other: &Type) -> bool {
@@ -805,10 +795,6 @@ impl FuncDef {
 }
 
 impl TEnv {
-    fn has_visible_variable(&self, name: &str) -> bool {
-        self.variables.contains_key(name)
-    }
-
     fn and_lambda() -> TExpr {
         let var0 = "__item0__".to_owned();
         let var1 = "__item1__".to_owned();
@@ -831,70 +817,6 @@ impl TEnv {
             args: vec![Arg{name: "__item__".to_owned(), arg_type: canon.clone()}],
             body: Box::new(big_and(&conds)?)
         }), canon))
-    }
-
-    /// Returns a helper lambda representing the logical `and` operation
-    /// Used when checking `Vec`s.
-    /// let __and__ = |__item0__:bool, __item1__:bool| __item0__ && __item1__;
-    fn define_and(&mut self) -> Result<(Vec<TStmt>, TExpr), TypeError> {
-        let name = "__and__".to_owned();
-        let mut stmts = vec![];
-        let typ = Type::lambda(&[Type::basic("bool"), Type::basic("bool")], &Type::basic("bool"));
-        if !self.has_visible_variable(&name) {
-            let var0 = "__item0__".to_owned();
-            let var1 = "__item1__".to_owned();
-            assert!(!self.has_visible_variable(&var0));
-            assert!(!self.has_visible_variable(&var1));
-            let v0 = TExpr::Variable { name: var0.clone(), typ: Type::basic("bool") };
-            let v1 = TExpr::Variable { name: var1.clone(), typ: Type::basic("bool") };
-            let body = v0.and(&v1)?;
-
-            stmts.push(
-                TStmt::Let{
-                    name: name.clone(),
-                    typ: typ.clone(),
-                    mutable: false,
-                    value:  TExpr::Lambda {
-                    args: vec![Arg{name: var0.clone(), arg_type: Type::basic("bool")}, Arg{name: var1.clone(), arg_type: Type::basic("bool")}],
-                    body: Box::new(body)
-                }}
-            );
-            self.variables.insert(name.clone(), typ.clone());
-        }
-        Ok((stmts, TExpr::Variable { name, typ }))
-    }
-
-    /// Return none if there are no conditions set on the type
-    /// This is used to define a Lambda on the canonical type,
-    /// which checks the conditions on the more restrictive type.
-    /// e.g.
-    /// let __type_i8__ = |__item__:int| __item__ >= -128 && __item__ <= 127;
-    fn define_type(&mut self, typ: &Type) -> Result<Option<(Vec<TStmt>, TExpr)>, TypeError> {
-        let name = format!("__type_{}__", typ);
-        let mut stmts = vec![];
-        let var = "__item__".to_owned();
-        let (canon, conds) = typ.canonicalize(&var)?;
-        if conds.is_empty() {
-            return Ok(None);
-        }
-        let typ = Type::lambda(&[canon], &Type::basic("bool"));
-        if !self.has_visible_variable(&name) {
-            assert!(!self.has_visible_variable(&var));
-
-            stmts.push(
-                TStmt::Let{
-                    name: name.clone(),
-                    typ: typ.clone(),
-                    mutable: false,
-                    value: TExpr::Lambda {
-                        args: vec![Arg{name: var.clone(), arg_type: typ.clone()}],
-                        body: Box::new(big_and(&conds)?)
-                    }
-                }
-            );
-            self.variables.insert(name.clone(), typ.clone());
-        }
-        Ok(Some((stmts, TExpr::Variable { name, typ })))
     }
 }
 

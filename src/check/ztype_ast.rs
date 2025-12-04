@@ -152,7 +152,7 @@ pub fn display_texprs(types: &[TExpr]) -> String {
 impl std::fmt::Display for TFuncDef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "fn {}(", self.name)?;
-        for (i, arg) in self.args.iter().enumerate() {
+        for arg in &self.args {
             writeln!(f, "    {}: {},", arg.name, arg.arg_type)?;
         }
         writeln!(f, ") -> {}: {}", self.return_name, self.return_type)?;

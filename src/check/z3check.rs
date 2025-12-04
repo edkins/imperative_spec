@@ -101,12 +101,6 @@ struct Env {
     other_funcs: Vec<CheckedFunction>,
 }
 
-#[derive(Clone, Copy)]
-enum AssertMode {
-    Assert,
-    Assume,
-}
-
 impl CheckedFunction {
     fn z3_func_decl(&self) -> Result<z3::FuncDecl, CheckError> {
         let args = self
@@ -314,17 +308,6 @@ impl Literal {
     }
 }
 
-impl Bound {
-    fn to_z3_int(&self) -> Option<z3::ast::Int> {
-        match self {
-            Bound::MinusInfinity => None,
-            Bound::PlusInfinity => None,
-            Bound::I64(v) => Some(z3::ast::Int::from_i64(*v)),
-            Bound::U64(v) => Some(z3::ast::Int::from_u64(*v)),
-        }
-    }
-}
-
 impl Type {
     // fn check_value(&self, value: &Dynamic, env: &mut Env) -> Result<(), CheckError> {
     //     self.check_or_assume_value(value, env, AssertMode::Assert)
@@ -463,29 +446,6 @@ impl Type {
     }
 }
 
-impl AssignOp {
-    fn relate(
-        &self,
-        old_left: Dynamic,
-        new_left: Dynamic,
-        right: Dynamic,
-    ) -> Result<z3::ast::Bool, CheckError> {
-        match self {
-            AssignOp::Assign => Ok(new_left.safe_eq(&right)?),
-            AssignOp::PlusAssign => {
-                let left_int = int(&old_left)?;
-                let right_int = int(&right)?;
-                Ok(int(&new_left)?.safe_eq(left_int + right_int)?)
-            }
-            AssignOp::MinusAssign => {
-                let left_int = int(&old_left)?;
-                let right_int = int(&right)?;
-                Ok(int(&new_left)?.safe_eq(left_int - right_int)?)
-            }
-        }
-    }
-}
-
 impl Env {
     fn new(other_funcs: &[CheckedFunction], sees: &[String]) -> Self {
         let mut other_funcs_visible = Vec::new();
@@ -548,21 +508,6 @@ impl Env {
         } else {
             self.assumptions.push(cond.clone());
             Ok(())
-        }
-    }
-
-    fn assert_or_assume(
-        &mut self,
-        cond: &z3::ast::Bool,
-        message: &str,
-        mode: AssertMode,
-    ) -> Result<(), CheckError> {
-        match mode {
-            AssertMode::Assert => self.assert(cond, message),
-            AssertMode::Assume => {
-                self.assume(cond.clone());
-                Ok(())
-            }
         }
     }
 
@@ -760,7 +705,7 @@ fn void_value() -> Dynamic {
     z3::ast::Int::from_i64(0).into()
 }
 
-fn z3_function_call(name: &str, args: &[Dynamic], return_type: &Type, env: &mut Env) -> Result<Dynamic, CheckError> {
+fn z3_function_call(name: &str, args: &[Dynamic], _return_type: &Type, env: &mut Env) -> Result<Dynamic, CheckError> {
     // TODO: check return type is correct?
     match (name, args.len()) {
         ("==", 2) => {
