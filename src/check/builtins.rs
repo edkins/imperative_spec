@@ -1,21 +1,28 @@
 use std::{collections::HashMap, slice::from_ref};
 
-use crate::{check::overloads::{TFunc, TOptimizedFunc, TOverloadedFunc}, syntax::ast::Type};
+use crate::check::{overloads::{TFunc, TOptimizedFunc, TOverloadedFunc}, parameterized::{ParameterizedType, ParameterizedTypeArg}};
 
 pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     let mut functions = HashMap::new();
-    let tint = Type::basic("int");
-    let tbool = Type::basic("bool");
-    let int_rel = TOverloadedFunc::simple(&[tint.clone(), tint.clone()], &tbool);
-    let int_binop = TOverloadedFunc::simple(&[tint.clone(), tint.clone()], &tint);
-    let print_sig = TOverloadedFunc::simple(&[Type::basic("str")], &Type::basic("void"));
-    let assert_sig = TOverloadedFunc::simple(from_ref(&tbool), &Type::basic("void"));
-    let bool_op = TOverloadedFunc::simple(&[tbool.clone(), tbool.clone()], &tbool);
+    let tint = ParameterizedType::basic("int");
+    let tbool = ParameterizedType::basic("bool");
+    let tstr = ParameterizedType::basic("str");
+    let tvoid = ParameterizedType::basic("void");
+    let tparam = ParameterizedType::Param("T".to_owned());
+    let seqt = ParameterizedType::Named(
+        "Seq".to_owned(),
+        vec![ParameterizedTypeArg::Type(tparam.clone())],
+    );
+    let int_rel = TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tbool);
+    let int_binop = TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tint);
+    let print_sig = TOverloadedFunc::psimple(from_ref(&tstr), &tvoid);
+    let assert_sig = TOverloadedFunc::psimple(from_ref(&tbool), &tvoid);
+    let bool_op = TOverloadedFunc::psimple(&[tbool.clone(), tbool.clone()], &tbool);
     let eq_sig = TOverloadedFunc(
         vec![
             TOptimizedFunc {
                 headline: TFunc {
-                    arg_types: vec![tint.clone(), tint.clone()],
+                    arg_types: vec![tparam.clone(), tparam.clone()],
                     return_type: tbool.clone(),
                 },
                 optimizations: vec![],
@@ -67,6 +74,10 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     functions.insert(
         "assert".to_owned(),
         assert_sig.clone(),
+    );
+    functions.insert(
+        "seq_len".to_owned(),
+        TOverloadedFunc::psimple(from_ref(&seqt), &tint),
     );
     functions
 }

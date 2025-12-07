@@ -1,8 +1,15 @@
-use crate::{check::{ztype_ast::TExpr, ztype_inference::TypeError}, syntax::ast::Type};
+use std::collections::HashMap;
 
+use crate::{check::{parameterized::ParameterizedType, ztype_ast::TExpr, ztype_inference::TypeError}, syntax::ast::{Bound, Type, TypeArg}};
 
 #[derive(Clone)]
 pub struct TFunc {
+    pub arg_types: Vec<ParameterizedType>,
+    pub return_type: ParameterizedType,
+}
+
+#[derive(Clone)]
+pub struct TConcreteFunc {
     pub arg_types: Vec<Type>,
     pub return_type: Type,
 }
@@ -16,33 +23,41 @@ pub struct TOptimizedFunc {
 #[derive(Clone)]
 pub struct TOverloadedFunc(pub Vec<TOptimizedFunc>);
 
-impl TFunc {
-    fn new(args_types: &[Type], return_type: &Type) -> Self {
-        TFunc {
-            arg_types: args_types.to_vec(),
-            return_type: return_type.clone(),
-        }
-    }
-}
+// impl TFunc {
+//     fn new(args_types: &[ParameterizedType], return_type: &ParameterizedType) -> Self {
+//         TFunc {
+//             arg_types: args_types.to_vec(),
+//             return_type: return_type.clone(),
+//         }
+//     }
+// }
 
 impl TOverloadedFunc {
     pub fn simple(arg_types: &[Type], return_type: &Type) -> Self {
-        TOverloadedFunc(vec![TOptimizedFunc { headline: TFunc::new(arg_types, return_type), optimizations: vec![] }])
+        let arg_types = arg_types
+            .iter()
+            .map(|t| ParameterizedType::from_type(t))
+            .collect::<Vec<ParameterizedType>>();
+        let return_type = ParameterizedType::from_type(return_type);
+        TOverloadedFunc(vec![TOptimizedFunc { headline: TFunc { arg_types, return_type }, optimizations: vec![] }])
+    }
+
+    pub fn psimple(arg_types: &[ParameterizedType], return_type: &ParameterizedType) -> Self {
+        TOverloadedFunc(vec![TOptimizedFunc { headline: TFunc { arg_types: arg_types.to_vec(), return_type: return_type.clone() }, optimizations: vec![] }])
     }
 }
 
-
 impl TOverloadedFunc {
-    pub fn extract_single(&self) -> Result<&TOptimizedFunc, TypeError> {
-        if self.0.len() != 1 {
-            return Err(TypeError {
-                message: format!(
-                    "Expected exactly one function overload, found {}",
-                    self.0.len()
-                ),
-            });
-        }
-        Ok(&self.0.first().unwrap())
+    pub fn extract_single(&self) -> Result<TConcreteFunc, TypeError> {
+        Ok(TConcreteFunc {
+            arg_types: self.0[0]
+                .headline
+                .arg_types
+                .iter()
+                .map(|t| t.to_type())
+                .collect::<Result<Vec<Type>, TypeError>>()?,
+            return_type: self.0[0].headline.return_type.to_type()?,
+        })
     }
 
     pub fn lookup_return_type(&self, arg_types: &[Type]) -> Result<Type, TypeError> {
@@ -52,14 +67,18 @@ impl TOverloadedFunc {
                 continue;
             }
             let mut compatible = true;
+            let mut mapping = HashMap::new();
             for (arg_type, param_type) in arg_types.iter().zip(&headline.arg_types) {
-                if !arg_type.compatible_with(param_type) {
+                param_type.unify(arg_type, &mut mapping)?;
+            }
+            for (arg_type, param_type) in arg_types.iter().zip(&headline.arg_types) {
+                if !arg_type.compatible_with(&param_type.instantiate(&mapping)?) {
                     compatible = false;
                     break;
                 }
             }
             if compatible {
-                return Ok(headline.return_type.clone());
+                return Ok(headline.return_type.instantiate(&mapping)?);
             }
         }
         Err(TypeError {
@@ -81,13 +100,18 @@ impl TOverloadedFunc {
                 continue;
             }
             let mut compatible = true;
+            let mut mapping = HashMap::new();
+            for (arg, param_type) in args.iter().zip(&headline.arg_types) {
+                param_type.unify(&arg.typ(), &mut mapping)?;
+            }
             let mut type_preconditions = vec![];
             for (arg, param_type) in args.iter().zip(&headline.arg_types) {
-                if !arg.typ().compatible_with(param_type) {
+                let instantiated = param_type.instantiate(&mapping)?;
+                if !arg.typ().compatible_with(&instantiated) {
                     compatible = false;
                     break;
                 }
-                type_preconditions.extend_from_slice(&param_type.type_assertions(arg.clone())?);
+                type_preconditions.extend_from_slice(&instantiated.type_assertions(arg.clone())?);
             }
             if compatible {
                 return Ok(type_preconditions);

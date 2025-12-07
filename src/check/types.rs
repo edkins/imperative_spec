@@ -30,6 +30,14 @@ impl Type {
     pub fn most_general_type(&self) -> Type {
         if self.is_int() {
             Type::basic("int")
+        } else if let Some(elem) = self.get_named_seq() {
+            let general_elem = elem.most_general_type();
+            Type {
+                name: "Seq".to_owned(),
+                type_args: vec![
+                    TypeArg::Type(general_elem),
+                ],
+            }
         } else {
             self.clone()
         }

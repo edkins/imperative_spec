@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     check::{
-        builtins, overloads::{TFunc, TOptimizedFunc, TOverloadedFunc}, ztype_ast::{TExpr, TFuncDef, TStmt}, ztype_inference::TypeError
+        builtins, overloads::TOverloadedFunc, ztype_ast::{TExpr, TFuncDef, TStmt}, ztype_inference::TypeError
     },
     syntax::ast::*,
 };
@@ -317,8 +317,6 @@ impl Env {
             let cond_z3_value = cond.z3_check(self)?;
             self.assert(&boolean(&cond_z3_value)?, "Type assertion failed in assignment")?;
         }
-        // println!("Checking value of assigned variable {} to type {}", new_var, ty);
-        // ty.check_value(&new_var.clone(), self)
         Ok(())
     }
 
@@ -590,13 +588,10 @@ impl Env {
                 .ok_or(CheckError {
                     message: format!("Undefined function: {}", name),
                 })?;
-            Ok(TOverloadedFunc(vec![TOptimizedFunc {
-                headline: TFunc {
-                    arg_types: func.args.iter().map(|a| a.arg_type.clone()).collect(),
-                    return_type: func.return_type.clone(),
-                },
-                optimizations: vec![]
-            }]))
+            Ok(TOverloadedFunc::simple(
+                    &func.args.iter().map(|a| a.arg_type.clone()).collect::<Vec<_>>(),
+                    &func.return_type
+            ))
         }
     }
 }

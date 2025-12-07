@@ -669,7 +669,7 @@ impl FuncDef {
                     self.name
                 ),
             })?
-            .extract_single()?.headline;
+            .extract_single()?;
         assert!(decl.arg_types.len() == self.args.len());
         for (a, t) in self.args.iter().zip(&decl.arg_types) {
             if local_env.variables.contains_key(&a.name) {
