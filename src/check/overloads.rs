@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use crate::{
     check::{
-        parameterized::{ParameterizedType, ParameterizedTypeArg},
+        parameterized::{ParameterizedType},
         ztype_ast::TExpr,
         ztype_inference::TypeError,
     },
-    syntax::ast::{Bound, Type, TypeArg},
+    syntax::ast::Type,
 };
 
 #[derive(Clone)]
@@ -21,6 +21,7 @@ pub struct TConcreteFunc {
     pub return_type: Type,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct TOptimizedFunc {
     pub headline: TFunc,
@@ -146,62 +147,4 @@ impl TOverloadedFunc {
             ),
         })
     }
-
-    // fn mk_function_call(&self, name: &str, args: &[TExpr]) -> Result<TExpr, TypeError> {
-    //     match self {
-    //         TOverloadedFunc::Single{headline, ..} => {
-    //             if headline.arg_types.len() != args.len() {
-    //                 return Err(TypeError {
-    //                     message: format!(
-    //                         "Function {} expects {} arguments, got {}",
-    //                         name,
-    //                         headline.arg_types.len(),
-    //                         args.len()
-    //                     ),
-    //                 });
-    //             }
-    //             let mut compatible = true;
-    //             for (arg_type, param_type) in args.iter().zip(&headline.arg_types) {
-    //                 if !arg_type.typ().compatible_with(param_type) {
-    //                     compatible = false;
-    //                     break;
-    //                 }
-    //             }
-    //             if compatible {
-    //                 let coerced_args = args
-    //                     .iter()
-    //                     .zip(&headline.arg_types)
-    //                     .map(|(arg, param_type)| arg.coerce(param_type))
-    //                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
-    //                 return Ok(TExpr::FunctionCall {
-    //                     name: name.to_owned(),
-    //                     args: coerced_args,
-    //                     return_type: headline.return_type.clone(),
-    //                 });
-    //             }
-    //             Err(TypeError {
-    //                 message: format!(
-    //                     "No matching function overload found for {} with given argument types {}",
-    //                     name,
-    //                     display_texprs(args)
-    //                 ),
-    //             })
-    //         }
-    //         TOverloadedFunc::Equality => {
-    //             if args.len() != 2 {
-    //                 return Err(TypeError {
-    //                     message: "Equality function requires exactly 2 arguments".to_owned(),
-    //                 });
-    //             }
-    //             let eqt = args[0].typ().find_equality_type(&args[1].typ())?;
-    //             let arg0 = args[0].coerce(&eqt)?;
-    //             let arg1 = args[1].coerce(&eqt)?;
-    //             Ok(TExpr::FunctionCall {
-    //                 name: name.to_owned(),
-    //                 args: vec![arg0, arg1],
-    //                 return_type: Type::basic("bool"),
-    //             })
-    //         }
-    //     }
-    // }
 }

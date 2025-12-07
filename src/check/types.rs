@@ -1,5 +1,3 @@
-use std::array;
-
 use crate::{
     check::{
         ztype_ast::TExpr,
@@ -213,15 +211,6 @@ impl Type {
             }
         }
         false
-    }
-
-    pub fn no_type_args(&self) -> Result<(), TypeError> {
-        if !self.type_args.is_empty() {
-            return Err(TypeError {
-                message: format!("Type {} should not have type arguments", self),
-            });
-        }
-        Ok(())
     }
 
     pub fn one_type_arg(&self) -> Result<Type, TypeError> {

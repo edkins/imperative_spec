@@ -36,7 +36,6 @@ pub enum TStmt {
     },
     Assign {
         name: String,
-        typ: Type,
         value: TExpr,
     },
 }
@@ -158,17 +157,6 @@ impl std::fmt::Display for TStmt {
             }
         }
     }
-}
-
-pub fn display_texprs(types: &[TExpr]) -> String {
-    let mut result = String::new();
-    for (i, expr) in types.iter().enumerate() {
-        result.push_str(&format!("{}", expr));
-        if i != types.len() - 1 {
-            result.push_str(", ");
-        }
-    }
-    result
 }
 
 impl std::fmt::Display for TFuncDef {
