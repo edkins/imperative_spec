@@ -1,0 +1,9 @@
+fn my_add(x: u32, y: u32) -> u32
+    requires x <= 65536, y <= 65536
+{
+    x * y
+}
+
+fn main() {
+    my_add(2,3);
+}

@@ -18,9 +18,15 @@ pub struct TConcreteFunc {
 }
 
 #[derive(Clone)]
+pub struct Optimization {
+    pub debug_name: String,
+    pub func: TFunc,
+}
+
+#[derive(Clone)]
 pub struct TOverloadedFunc {
     pub headline: TFunc,
-    pub optimizations: Vec<TFunc>,
+    pub optimizations: Vec<Optimization>,
 }
 
 impl TOverloadedFunc {

@@ -476,6 +476,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
         (">=", 2) => Ok(int(&args[0])?.ge(&int(&args[1])?).into()),
         ("+", 2) => Ok((int(&args[0])? + int(&args[1])?).into()),
         ("-", 2) => Ok((int(&args[0])? - int(&args[1])?).into()),
+        ("*", 2) => Ok((int(&args[0])? * int(&args[1])?).into()),
         ("&&", 2) => Ok((boolean(&args[0])? & boolean(&args[1])?).into()),
         ("||", 2) => Ok((boolean(&args[0])? | boolean(&args[1])?).into()),
         ("assert", 1) => {
@@ -697,12 +698,21 @@ fn z3_check_funcdef(
         env.assume(boolean(&cond_z3_value)?);
     }
     let body_z3_value = func.body.z3_check(&mut env)?;
-    // func.return_type.check_value(&body_z3_value, &mut env)?;
 
-    // now check all the postconditions
     let ret = &func.return_name;
     let ret_var = env.insert_var(ret, false, &func.return_type)?;
     env.assume(ret_var.safe_eq(&body_z3_value)?);
+
+    // check return type
+    for type_assertion in &func.return_type.type_assertions(TExpr::Variable {
+        name: func.return_name.clone(),
+        typ: func.return_type.clone(),
+    })? {
+        let cond_z3_value = type_assertion.z3_check(&mut env)?;
+        env.assert(&boolean(&cond_z3_value)?, "Type assertion failed on return")?;
+    }
+
+    // now check all the postconditions
     for postcondition in &func.postconditions {
         let cond_z3_value = postcondition.z3_check(&mut env)?;
         env.assert(&boolean(&cond_z3_value)?, "Postcondition failed")?;

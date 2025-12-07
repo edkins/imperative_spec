@@ -1,12 +1,31 @@
 use std::{collections::HashMap, slice::from_ref};
 
 use crate::check::{
-    overloads::{TFunc, TOverloadedFunc},
+    overloads::{Optimization, TFunc, TOverloadedFunc},
     parameterized::{ParameterizedType, ParameterizedTypeArg},
 };
 
+fn insert_multiple(
+    map: &mut HashMap<String, TOverloadedFunc>,
+    names: &[&str],
+    func: TOverloadedFunc,
+) {
+    for &name in names {
+        if map.contains_key(name) {
+            panic!(
+                "Builtin function {} defined multiple times",
+                name
+            );
+        } else {
+            map.insert(name.to_owned(), func.clone());
+        }
+    }
+}
+
 pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     let mut functions = HashMap::new();
+    let z32 = ParameterizedType::basic("z32");
+    let z64 = ParameterizedType::basic("z64");
     let tint = ParameterizedType::basic("int");
     let tbool = ParameterizedType::basic("bool");
     let tstr = ParameterizedType::basic("str");
@@ -21,31 +40,37 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
         "Seq".to_owned(),
         vec![ParameterizedTypeArg::Type(uparam.clone())],
     );
-    let int_rel = TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tbool);
-    let int_binop = TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tint);
-    let print_sig = TOverloadedFunc::psimple(from_ref(&tstr), &tvoid);
-    let assert_sig = TOverloadedFunc::psimple(from_ref(&tbool), &tvoid);
-    let bool_op = TOverloadedFunc::psimple(&[tbool.clone(), tbool.clone()], &tbool);
-    let eq_sig = TOverloadedFunc {
-        headline: TFunc {
-            arg_types: vec![tparam.clone(), tparam.clone()],
-            return_type: tbool.clone(),
-        },
-        optimizations: vec![],
-    };
 
-    functions.insert("==".to_owned(), eq_sig.clone());
-    functions.insert("!=".to_owned(), eq_sig.clone());
-    functions.insert("<".to_owned(), int_rel.clone());
-    functions.insert("<=".to_owned(), int_rel.clone());
-    functions.insert(">".to_owned(), int_rel.clone());
-    functions.insert(">=".to_owned(), int_rel.clone());
-    functions.insert("+".to_owned(), int_binop.clone());
-    functions.insert("-".to_owned(), int_binop.clone());
-    functions.insert("&&".to_owned(), bool_op.clone());
-    functions.insert("||".to_owned(), bool_op.clone());
-    functions.insert("println".to_owned(), print_sig.clone());
-    functions.insert("assert".to_owned(), assert_sig.clone());
+    insert_multiple(&mut functions, &["==", "!="], TOverloadedFunc::psimple(&[tparam.clone(), tparam.clone()], &tbool));
+
+    insert_multiple(&mut functions, &["<","<=",">",">="], TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tbool));
+
+    for &(symbol, name) in &[("+", "add"), ("-", "sub"), ("*", "mul")] {
+        functions.insert(
+            symbol.to_owned(),
+            TOverloadedFunc {
+                headline: TFunc {
+                    arg_types: vec![tint.clone(), tint.clone()],
+                    return_type: tint.clone(),
+                },
+                optimizations: vec![
+                    Optimization {
+                        debug_name: format!("z32_{}", name),
+                        func: TFunc { arg_types: vec![z32.clone(), z32.clone()], return_type: z32.clone() }
+                    },
+                    Optimization {
+                        debug_name: format!("z64_{}", name),
+                        func: TFunc { arg_types: vec![z64.clone(), z64.clone()], return_type: z64.clone() }
+                    }
+                ],
+            },
+        );
+    }
+
+    insert_multiple(&mut functions, &["&&","||"], TOverloadedFunc::psimple(&[tbool.clone(), tbool.clone()], &tbool));
+
+    functions.insert("println".to_owned(), TOverloadedFunc::psimple(from_ref(&tstr), &tvoid));
+    functions.insert("assert".to_owned(), TOverloadedFunc::psimple(from_ref(&tbool), &tvoid));
     functions.insert(
         "seq_len".to_owned(),
         TOverloadedFunc::psimple(from_ref(&seqt), &tint),

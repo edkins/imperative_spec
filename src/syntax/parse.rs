@@ -38,6 +38,7 @@ enum Symbol {
     Arrow,
     Plus,
     Minus,
+    Star,
     EqualEqual,
     NotEqual,
     PlusAssign,
@@ -189,7 +190,7 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
 }
 
 fn is_multi_char_sym(ch: char) -> bool {
-    matches!(ch, ':' | '=' | '+' | '-' | '<' | '>' | '!' | '&' | '|' | '#')
+    matches!(ch, ':' | '=' | '+' | '-' | '*' | '<' | '>' | '!' | '&' | '|' | '#')
 }
 
 fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
@@ -200,6 +201,7 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "->" => Ok((input, Symbol::Arrow)),
         "+" => Ok((input, Symbol::Plus)),
         "-" => Ok((input, Symbol::Minus)),
+        "*" => Ok((input, Symbol::Star)),
         "!=" => Ok((input, Symbol::NotEqual)),
         "==" => Ok((input, Symbol::EqualEqual)),
         "+=" => Ok((input, Symbol::PlusAssign)),
@@ -372,11 +374,33 @@ fn cmpop(input: &str) -> IResult<&str, Symbol> {
     .parse(input)
 }
 
-fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
+fn expr_times(input: &str) -> IResult<&str, Expr> {
     let (input, mut exprs) = expr_tight(input)?;
     let mut inp = input;
     loop {
-        let (input, op) = opt(pair(plusminus, expr_tight)).parse(inp)?;
+        let (input, op) = opt(pair(symbol(Symbol::Star), expr_tight)).parse(inp)?;
+        inp = input;
+
+        match op {
+            Some((Symbol::Star, rhs)) => {
+                let new_expr = Expr::FunctionCall {
+                    name: "*".to_owned(),
+                    args: vec![exprs.clone(), rhs],
+                };
+                exprs = new_expr;
+            }
+            None => break,
+            _ => unreachable!(),
+        }
+    }
+    Ok((inp, exprs))
+}
+
+fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
+    let (input, mut exprs) = expr_times(input)?;
+    let mut inp = input;
+    loop {
+        let (input, op) = opt(pair(plusminus, expr_times)).parse(inp)?;
         inp = input;
 
         match op {
