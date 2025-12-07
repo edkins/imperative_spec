@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{check::ztype_inference::TypeError, syntax::ast::{Bound, Type, TypeArg}};
-
+use crate::{
+    check::ztype_inference::TypeError,
+    syntax::ast::{Bound, Type, TypeArg},
+};
 
 #[derive(Clone)]
 pub enum ParameterizedType {
@@ -66,7 +68,11 @@ impl ParameterizedTypeArg {
         }
     }
 
-    pub fn unify(&self, concrete: &TypeArg, mapping: &mut HashMap<String, Type>) -> Result<(), TypeError> {
+    pub fn unify(
+        &self,
+        concrete: &TypeArg,
+        mapping: &mut HashMap<String, Type>,
+    ) -> Result<(), TypeError> {
         match (self, concrete) {
             (ParameterizedTypeArg::Bound(b1), TypeArg::Bound(b2)) => {
                 if b1 != b2 {
@@ -112,7 +118,10 @@ impl ParameterizedType {
     }
 
     pub fn lambda_type(arg_types: &[ParameterizedType], return_type: &ParameterizedType) -> Self {
-        let mut args = arg_types.iter().map(|t| ParameterizedTypeArg::Type(t.clone())).collect::<Vec<ParameterizedTypeArg>>();
+        let mut args = arg_types
+            .iter()
+            .map(|t| ParameterizedTypeArg::Type(t.clone()))
+            .collect::<Vec<ParameterizedTypeArg>>();
         let ret = ParameterizedTypeArg::Type(return_type.clone());
         args.push(ret);
         ParameterizedType::Named("Lambda".to_owned(), args)
@@ -148,9 +157,7 @@ impl ParameterizedType {
     pub fn has_params(&self) -> bool {
         match self {
             ParameterizedType::Param(_) => true,
-            ParameterizedType::Named(_, params) => {
-                params.iter().any(|p| p.has_params())
-            }
+            ParameterizedType::Named(_, params) => params.iter().any(|p| p.has_params()),
         }
     }
 
@@ -171,9 +178,7 @@ impl ParameterizedType {
                             ),
                         });
                     }
-                    let general_params = vec![
-                        params[0].most_general()?,
-                    ];
+                    let general_params = vec![params[0].most_general()?];
                     Ok(ParameterizedType::Named("Seq".to_owned(), general_params))
                 } else if name == "Vec" {
                     // Special case: Vec<T> becomes Seq<T>
@@ -185,26 +190,34 @@ impl ParameterizedType {
                             ),
                         });
                     }
-                    let general_params = vec![
-                        params[0].most_general()?,
-                    ];
+                    let general_params = vec![params[0].most_general()?];
                     Ok(ParameterizedType::Named("Seq".to_owned(), general_params))
                 } else {
-                    let general_params = params
-                        .iter()
-                        .map(|p| p.most_general())
-                        .collect::<Result<Vec<ParameterizedTypeArg>, TypeError>>()?;
+                    let general_params = params.iter().map(|p| p.most_general()).collect::<Result<
+                        Vec<ParameterizedTypeArg>,
+                        TypeError,
+                    >>(
+                    )?;
                     Ok(ParameterizedType::Named(name.clone(), general_params))
                 }
             }
         }
     }
 
-    pub fn unify(&self, concrete: &Type, mapping: &mut HashMap<String, Type>) -> Result<(), TypeError> {
-        self.most_general()?.unify_inner(&concrete.most_general_type(), mapping)
+    pub fn unify(
+        &self,
+        concrete: &Type,
+        mapping: &mut HashMap<String, Type>,
+    ) -> Result<(), TypeError> {
+        self.most_general()?
+            .unify_inner(&concrete.most_general_type(), mapping)
     }
 
-    fn unify_inner(&self, concrete: &Type, mapping: &mut HashMap<String, Type>) -> Result<(), TypeError> {
+    fn unify_inner(
+        &self,
+        concrete: &Type,
+        mapping: &mut HashMap<String, Type>,
+    ) -> Result<(), TypeError> {
         match self {
             ParameterizedType::Param(name) => {
                 if let Some(mapped_type) = mapping.get(name) {

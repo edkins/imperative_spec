@@ -8,11 +8,17 @@ use std::{
 
 use crate::{
     check::{
-        builtins, overloads::TOverloadedFunc, ztype_ast::{TExpr, TFuncDef, TStmt}, ztype_inference::TypeError
+        builtins,
+        overloads::TOverloadedFunc,
+        ztype_ast::{TExpr, TFuncDef, TStmt},
+        ztype_inference::TypeError,
     },
     syntax::ast::*,
 };
-use z3::{self, SortDiffers, ast::{Ast, Dynamic}};
+use z3::{
+    self, SortDiffers,
+    ast::{Ast, Dynamic},
+};
 
 #[derive(Debug)]
 pub struct CheckError {
@@ -166,7 +172,7 @@ impl Type {
         } else if self.is_str() {
             return Ok(z3::Sort::string());
         } else if self.is_void() {
-            return Ok(void_value().get_sort())
+            return Ok(void_value().get_sort());
         } else if self.is_named_seq() {
             let elem_type = self.one_type_arg()?;
             let elem_sort = elem_type.to_z3_sort()?;
@@ -306,16 +312,17 @@ impl Env {
         }
         info.mutate();
         let new_var = info.z3_const()?;
-        let conds = info.var_type.type_assertions(
-            TExpr::Variable {
-                name: var.to_owned(),
-                typ: info.var_type.clone(),
-            }
-        )?;
+        let conds = info.var_type.type_assertions(TExpr::Variable {
+            name: var.to_owned(),
+            typ: info.var_type.clone(),
+        })?;
         self.assume(new_var.safe_eq(&value)?);
         for cond in conds {
             let cond_z3_value = cond.z3_check(self)?;
-            self.assert(&boolean(&cond_z3_value)?, "Type assertion failed in assignment")?;
+            self.assert(
+                &boolean(&cond_z3_value)?,
+                "Type assertion failed in assignment",
+            )?;
         }
         Ok(())
     }
@@ -414,12 +421,10 @@ impl TStmt {
                 let z3_var = env.insert_var(name, *mutable, typ)?;
                 env.assume(z3_var.safe_eq(&z3_value)?);
                 // check the type
-                for type_assertion in &typ.type_assertions(
-                    TExpr::Variable {
-                        name: name.clone(),
-                        typ: typ.clone(),
-                    }
-                )? {
+                for type_assertion in &typ.type_assertions(TExpr::Variable {
+                    name: name.clone(),
+                    typ: typ.clone(),
+                })? {
                     let cond_z3_value = type_assertion.z3_check(env)?;
                     env.assert(&boolean(&cond_z3_value)?, "Type assertion failed in let")?;
                 }
@@ -447,7 +452,11 @@ fn boolean(x: &Dynamic) -> Result<z3::ast::Bool, CheckError> {
 
 fn string(x: &Dynamic) -> Result<z3::ast::String, CheckError> {
     x.as_string().ok_or_else(|| CheckError {
-        message: format!("Expected String type, got {:?} of sort {:?}", x, x.get_sort()),
+        message: format!(
+            "Expected String type, got {:?} of sort {:?}",
+            x,
+            x.get_sort()
+        ),
     })
 }
 
@@ -456,11 +465,7 @@ fn void_value() -> Dynamic {
     z3::ast::Int::from_i64(0).into()
 }
 
-fn z3_function_call(
-    name: &str,
-    args: &[Dynamic],
-    env: &mut Env,
-) -> Result<Dynamic, CheckError> {
+fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynamic, CheckError> {
     // TODO: check return type is correct?
     match (name, args.len()) {
         ("==", 2) => Ok(args[0].safe_eq(&args[1])?.into()),
@@ -538,12 +543,10 @@ fn z3_function_call(
                     call_env.assume(boolean(&cond_z3_value)?);
                 }
                 // assume any conditions on the return type
-                let return_type_conds = user_func.return_type.type_assertions(
-                    TExpr::Variable {
-                        name: user_func.return_value.clone(),
-                        typ: user_func.return_type.clone(),
-                    }
-                )?;
+                let return_type_conds = user_func.return_type.type_assertions(TExpr::Variable {
+                    name: user_func.return_value.clone(),
+                    typ: user_func.return_type.clone(),
+                })?;
                 for cond in return_type_conds {
                     let cond_z3_value = cond.z3_check(&mut call_env)?;
                     call_env.assume(boolean(&cond_z3_value)?);
@@ -589,8 +592,12 @@ impl Env {
                     message: format!("Undefined function: {}", name),
                 })?;
             Ok(TOverloadedFunc::simple(
-                    &func.args.iter().map(|a| a.arg_type.clone()).collect::<Vec<_>>(),
-                    &func.return_type
+                &func
+                    .args
+                    .iter()
+                    .map(|a| a.arg_type.clone())
+                    .collect::<Vec<_>>(),
+                &func.return_type,
             ))
         }
     }
@@ -602,16 +609,12 @@ impl TExpr {
         match self {
             TExpr::Literal(literal) => literal.z3_check(),
             TExpr::Variable { name, .. } => env.get_var(name),
-            TExpr::FunctionCall {
-                name,
-                args,
-                ..
-            } => {
+            TExpr::FunctionCall { name, args, .. } => {
                 let z3args = args
                     .iter()
                     .map(|arg| arg.z3_check(env))
                     .collect::<Result<Vec<_>, _>>()?;
-                let func:TOverloadedFunc = env.get_overloaded_func(name)?;
+                let func: TOverloadedFunc = env.get_overloaded_func(name)?;
                 let type_preconditions = func.lookup_type_preconditions(&args)?;
                 // println!("Begin precondtion check for function call {}", name);
                 for cond in type_preconditions {
@@ -681,12 +684,10 @@ fn z3_check_funcdef(
     for arg in &func.args {
         env.insert_var(&arg.name, false, &arg.arg_type)?;
         // assume the type assertions on the argument
-        for type_assertion in &arg.arg_type.type_assertions(
-            TExpr::Variable {
-                name: arg.name.clone(),
-                typ: arg.arg_type.clone(),
-            }
-        )? {
+        for type_assertion in &arg.arg_type.type_assertions(TExpr::Variable {
+            name: arg.name.clone(),
+            typ: arg.arg_type.clone(),
+        })? {
             let cond_z3_value = type_assertion.z3_check(&mut env)?;
             env.assume(boolean(&cond_z3_value)?);
         }

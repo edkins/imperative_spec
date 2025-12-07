@@ -147,7 +147,6 @@ impl Bound {
 //  }
 
 impl Type {
-
     pub fn find_equality_type(&self, other: &Type) -> Result<Type, TypeError> {
         self.find_common_type(other)
     }
@@ -497,14 +496,13 @@ impl Expr {
                     .iter()
                     .map(|a| a.type_check(env))
                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
-                let ret_type = overloaded.lookup_return_type(
-                    &targs.iter().map(|a| a.typ()).collect::<Vec<Type>>(),
-                )?;
+                let ret_type = overloaded
+                    .lookup_return_type(&targs.iter().map(|a| a.typ()).collect::<Vec<Type>>())?;
                 return Ok(TExpr::FunctionCall {
-                        name: name.to_owned(),
-                        args: targs,
-                        return_type: ret_type,
-                    });
+                    name: name.to_owned(),
+                    args: targs,
+                    return_type: ret_type,
+                });
             }
             Expr::Semicolon(stmt, expr) => {
                 let tstmt = stmt.type_check(env)?;
@@ -726,7 +724,10 @@ impl FuncDef {
             name: self.name.clone(),
             args,
             return_type: decl.return_type.clone(),
-            return_name: self.return_name.clone().unwrap_or_else(||"__ret__".to_owned()),
+            return_name: self
+                .return_name
+                .clone()
+                .unwrap_or_else(|| "__ret__".to_owned()),
             preconditions,
             postconditions,
             sees,

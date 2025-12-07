@@ -1,6 +1,13 @@
 use std::collections::HashMap;
 
-use crate::{check::{parameterized::{ParameterizedType, ParameterizedTypeArg}, ztype_ast::TExpr, ztype_inference::TypeError}, syntax::ast::{Bound, Type, TypeArg}};
+use crate::{
+    check::{
+        parameterized::{ParameterizedType, ParameterizedTypeArg},
+        ztype_ast::TExpr,
+        ztype_inference::TypeError,
+    },
+    syntax::ast::{Bound, Type, TypeArg},
+};
 
 #[derive(Clone)]
 pub struct TFunc {
@@ -39,11 +46,23 @@ impl TOverloadedFunc {
             .map(|t| ParameterizedType::from_type(t))
             .collect::<Vec<ParameterizedType>>();
         let return_type = ParameterizedType::from_type(return_type);
-        TOverloadedFunc(vec![TOptimizedFunc { headline: TFunc { arg_types, return_type }, optimizations: vec![] }])
+        TOverloadedFunc(vec![TOptimizedFunc {
+            headline: TFunc {
+                arg_types,
+                return_type,
+            },
+            optimizations: vec![],
+        }])
     }
 
     pub fn psimple(arg_types: &[ParameterizedType], return_type: &ParameterizedType) -> Self {
-        TOverloadedFunc(vec![TOptimizedFunc { headline: TFunc { arg_types: arg_types.to_vec(), return_type: return_type.clone() }, optimizations: vec![] }])
+        TOverloadedFunc(vec![TOptimizedFunc {
+            headline: TFunc {
+                arg_types: arg_types.to_vec(),
+                return_type: return_type.clone(),
+            },
+            optimizations: vec![],
+        }])
     }
 }
 
@@ -120,8 +139,7 @@ impl TOverloadedFunc {
         Err(TypeError {
             message: format!(
                 "No matching function overload found for given argument types {}",
-                args
-                    .iter()
+                args.iter()
                     .map(|t| t.typ().to_string())
                     .collect::<Vec<String>>()
                     .join(", ")

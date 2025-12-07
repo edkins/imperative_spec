@@ -334,7 +334,7 @@ fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
     move |input: &str| {
         let (input, _) = symbol(Symbol::Semicolon)(input)?;
         let (input, right) = opt(expr).parse(input)?;
-        let right = right.unwrap_or_else(||Expr::Literal(Literal::Unit));
+        let right = right.unwrap_or_else(|| Expr::Literal(Literal::Unit));
         Ok((
             input,
             Expr::Semicolon(Box::new(Stmt::Expr(left.clone())), Box::new(right)),
@@ -428,7 +428,8 @@ fn expr_cmp(input: &str) -> IResult<&str, Expr> {
 
 fn expr_conjunction(input: &str) -> IResult<&str, Expr> {
     let (input, expr) = expr_cmp(input)?;
-    let (input, and_opt) = opt(preceded(symbol(Symbol::LogicalAnd), expr_conjunction)).parse(input)?;
+    let (input, and_opt) =
+        opt(preceded(symbol(Symbol::LogicalAnd), expr_conjunction)).parse(input)?;
     match and_opt {
         Some(rhs) => {
             let new_expr = Expr::FunctionCall {
@@ -443,7 +444,8 @@ fn expr_conjunction(input: &str) -> IResult<&str, Expr> {
 
 fn expr_disjunction(input: &str) -> IResult<&str, Expr> {
     let (input, expr) = expr_conjunction(input)?;
-    let (input, or_opt) = opt(preceded(symbol(Symbol::LogicalOr), expr_disjunction)).parse(input)?;
+    let (input, or_opt) =
+        opt(preceded(symbol(Symbol::LogicalOr), expr_disjunction)).parse(input)?;
     match or_opt {
         Some(rhs) => {
             let new_expr = Expr::FunctionCall {
@@ -613,8 +615,12 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
     ))
     .parse(input)?;
 
-    let (input, body) =
-        delimited(symbol(Symbol::OpenBrace), expr_or_empty, symbol(Symbol::CloseBrace)).parse(input)?;
+    let (input, body) = delimited(
+        symbol(Symbol::OpenBrace),
+        expr_or_empty,
+        symbol(Symbol::CloseBrace),
+    )
+    .parse(input)?;
 
     let (return_name, return_type) = match return_stuff {
         Some((rn, rt)) => (rn, rt),

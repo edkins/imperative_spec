@@ -1,6 +1,12 @@
 use std::array;
 
-use crate::{check::{ztype_ast::TExpr, ztype_inference::{TypeError, big_and}}, syntax::ast::{Arg, Bound, Literal, Type, TypeArg}};
+use crate::{
+    check::{
+        ztype_ast::TExpr,
+        ztype_inference::{TypeError, big_and},
+    },
+    syntax::ast::{Arg, Bound, Literal, Type, TypeArg},
+};
 
 impl Bound {
     pub fn as_expr(&self) -> Result<TExpr, TypeError> {
@@ -34,9 +40,7 @@ impl Type {
             let general_elem = elem.most_general_type();
             Type {
                 name: "Seq".to_owned(),
-                type_args: vec![
-                    TypeArg::Type(general_elem),
-                ],
+                type_args: vec![TypeArg::Type(general_elem)],
             }
         } else {
             self.clone()
@@ -44,7 +48,11 @@ impl Type {
     }
 
     pub fn condless(&self) -> bool {
-        if matches!(self.name.as_str(), "int" | "z8" | "z16" | "z32" | "z64" | "str" | "bool" | "void" | "EmptySeq") && self.type_args.is_empty() {
+        if matches!(
+            self.name.as_str(),
+            "int" | "z8" | "z16" | "z32" | "z64" | "str" | "bool" | "void" | "EmptySeq"
+        ) && self.type_args.is_empty()
+        {
             return true;
         }
         if let Some(elem) = self.get_named_seq() {
@@ -114,7 +122,10 @@ impl Type {
                     Ok(vec![])
                 } else {
                     Err(TypeError {
-                        message: format!("Cannot generate type assertions for conditioned lambda type {}", self),
+                        message: format!(
+                            "Cannot generate type assertions for conditioned lambda type {}",
+                            self
+                        ),
                     })
                 }
             }
@@ -152,17 +163,31 @@ impl Type {
     }
 
     pub fn is_named_seq(&self) -> bool {
-        matches!((self.name.as_str(), self.type_args.len()), ("Seq"|"Vec",1)|("Array", 2))
+        matches!(
+            (self.name.as_str(), self.type_args.len()),
+            ("Seq" | "Vec", 1) | ("Array", 2)
+        )
     }
 
     pub fn is_int(&self) -> bool {
-        self.type_args.is_empty() && matches!(
-            self.name.as_str(),
-            "int" | "nat" | "z8" | "z16" | "z32" | "z64" | "i8" | "i16" | "i32" | "i64" | "u8"
-                | "u16"
-                | "u32"
-                | "u64"
-        )
+        self.type_args.is_empty()
+            && matches!(
+                self.name.as_str(),
+                "int"
+                    | "nat"
+                    | "z8"
+                    | "z16"
+                    | "z32"
+                    | "z64"
+                    | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+            )
     }
 
     pub fn discards_information(&self) -> bool {
@@ -176,7 +201,11 @@ impl Type {
         if self.is_empty_seq() && other.is_named_seq() {
             return true;
         }
-        if self.is_int() && other.is_int() && !self.discards_information() && !other.discards_information() {
+        if self.is_int()
+            && other.is_int()
+            && !self.discards_information()
+            && !other.discards_information()
+        {
             let (self_min, self_max) = lookup_int_bounds(&self.name);
             let (other_min, other_max) = lookup_int_bounds(&other.name);
             if self_min >= other_min && self_max <= other_max {
@@ -222,14 +251,21 @@ impl Type {
         if self.is_named_seq() && other.is_empty_seq() {
             return true;
         }
-        if let Some(self_elem) = self.get_named_seq() && let Some(other_elem) = other.get_named_seq() {
+        if let Some(self_elem) = self.get_named_seq()
+            && let Some(other_elem) = other.get_named_seq()
+        {
             return self_elem.compatible_with(&other_elem);
         }
         false
     }
 
     fn type_lambda(&self, more_general_type: &Type) -> Result<Option<TExpr>, TypeError> {
-        assert!(self.is_subtype_of(more_general_type), "Type {} is not a subtype of {}", self, more_general_type);
+        assert!(
+            self.is_subtype_of(more_general_type),
+            "Type {} is not a subtype of {}",
+            self,
+            more_general_type
+        );
         let var = TExpr::Variable {
             name: "__item__".to_owned(),
             typ: more_general_type.clone(),
@@ -247,7 +283,6 @@ impl Type {
         }))
     }
 }
-
 
 fn lookup_int_bounds(name: &str) -> (Bound, Bound) {
     match name {
