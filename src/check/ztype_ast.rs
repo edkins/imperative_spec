@@ -31,10 +31,12 @@ pub enum TStmt {
         name: String,
         typ: Type,
         mutable: bool,
+        type_declared: bool,
         value: TExpr,
     },
     Assign {
         name: String,
+        typ: Type,
         value: TExpr,
     },
 }
@@ -137,16 +139,21 @@ impl std::fmt::Display for TStmt {
             TStmt::Let {
                 name,
                 typ,
+                type_declared,
                 mutable,
                 value,
             } => {
+                write!(f, "let ")?;
                 if *mutable {
-                    write!(f, "let mut {}: {} = {}", name, typ, value)
+                    write!(f, "mut ")?;
+                }
+                if *type_declared {
+                    write!(f, "{}: {} = {}", name, typ, value)
                 } else {
-                    write!(f, "let {}: {} = {}", name, typ, value)
+                    write!(f, "{}: {{{}}} = {}", name, typ, value)
                 }
             }
-            TStmt::Assign { name, value } => {
+            TStmt::Assign { name, value, .. } => {
                 write!(f, "{} = {}", name, value)
             }
         }

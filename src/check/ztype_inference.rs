@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::slice::from_ref;
 
-use crate::check::ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt, display_texprs};
+use crate::check::builtins::builtins;
+use crate::check::overloads::TOverloadedFunc;
+use crate::check::ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt};
 use crate::syntax::ast::{
     Arg, AssignOp, Bound, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg,
 };
@@ -18,20 +20,14 @@ impl std::fmt::Display for TypeError {
 }
 impl std::error::Error for TypeError {}
 
-#[derive(Clone)]
-struct TFunc {
-    arg_types: Vec<Type>,
-    return_type: Type,
-    return_name: String,
-    arg_preconditions: Vec<TExpr>,
-    return_postconditions: Vec<TExpr>,
-}
-
-#[derive(Clone)]
-enum TOverloadedFunc {
-    Finite(Vec<TFunc>),
-    Equality,
-}
+// #[derive(Clone)]
+// struct TFunc {
+//     arg_types: Vec<Type>,
+//     return_type: Type,
+//     return_name: String,
+//     arg_preconditions: Vec<TExpr>,
+//     return_postconditions: Vec<TExpr>,
+// }
 
 #[derive(Clone)]
 struct TEnv {
@@ -40,68 +36,6 @@ struct TEnv {
 }
 
 const MAX_UNROLL: u64 = 64;
-
-impl TFunc {
-    fn new(args_types: &[Type], return_type: &Type) -> Self {
-        TFunc {
-            arg_types: args_types.to_vec(),
-            return_type: return_type.clone(),
-            return_name: "__ret__".to_owned(),
-            arg_preconditions: vec![],
-            return_postconditions: vec![],
-        }
-    }
-}
-
-fn lookup_in_bounds(name: &str) -> (Bound, Bound) {
-    match name {
-        "i8" => (Bound::I64(-128), Bound::I64(127)),
-        "i16" => (Bound::I64(-32768), Bound::I64(32767)),
-        "i32" => (Bound::I64(-2147483648), Bound::I64(2147483647)),
-        "i64" => (Bound::I64(i64::MIN), Bound::I64(i64::MAX)),
-        "u8" => (Bound::U64(0), Bound::U64(255)),
-        "u16" => (Bound::U64(0), Bound::U64(65535)),
-        "u32" => (Bound::U64(0), Bound::U64(4294967295)),
-        "u64" => (Bound::U64(0), Bound::U64(u64::MAX)),
-        "int" => (Bound::MinusInfinity, Bound::PlusInfinity),
-        "nat" => (Bound::U64(0), Bound::PlusInfinity),
-        _ => panic!("Unknown type for bounds lookup: {}", name),
-    }
-}
-
-fn bounds_to_expr(lower: Bound, upper: Bound, expr_factory: impl Fn(Type) -> TExpr) -> Vec<TExpr> {
-    let var_expr = expr_factory(Type::basic("int"));
-    let mut result = vec![];
-    match lower {
-        Bound::MinusInfinity => {}
-        Bound::I64(i) => result.push(TExpr::FunctionCall {
-            name: ">=".to_owned(),
-            args: vec![var_expr.clone(), TExpr::Literal(Literal::I64(i))],
-            return_type: Type::basic("bool"),
-        }),
-        Bound::U64(u) => result.push(TExpr::FunctionCall {
-            name: ">=".to_owned(),
-            args: vec![var_expr.clone(), TExpr::Literal(Literal::U64(u))],
-            return_type: Type::basic("bool"),
-        }),
-        Bound::PlusInfinity => unreachable!(),
-    }
-    match upper {
-        Bound::PlusInfinity => {}
-        Bound::I64(i) => result.push(TExpr::FunctionCall {
-            name: "<=".to_owned(),
-            args: vec![var_expr.clone(), TExpr::Literal(Literal::I64(i))],
-            return_type: Type::basic("bool"),
-        }),
-        Bound::U64(u) => result.push(TExpr::FunctionCall {
-            name: "<=".to_owned(),
-            args: vec![var_expr.clone(), TExpr::Literal(Literal::U64(u))],
-            return_type: Type::basic("bool"),
-        }),
-        Bound::MinusInfinity => unreachable!(),
-    }
-    result
-}
 
 impl Bound {
     pub fn as_u64(&self) -> Result<u64, TypeError> {
@@ -122,115 +56,97 @@ impl Bound {
     }
 }
 
+// impl Type {
+//     pub fn is_int(&self) -> bool {
+//         self.name.as_str() == "int" && self.type_args.is_empty()
+//     }
+
+//     pub fn canonicalize(&self, name: &str) -> Result<(Type, Vec<TExpr>), TypeError> {
+//         self.canonicalize_expr(|typ| TExpr::Variable {
+//             name: name.to_owned(),
+//             typ,
+//         })
+//     }
+
+//     pub fn canonicalize_dummy(&self) -> Result<Type, TypeError> {
+//         let (canon, _) = self.canonicalize_expr(|_| TExpr::Literal(Literal::Unit))?;
+//         Ok(canon)
+//     }
+
+//     pub fn canonicalize_const(&self, expr: &TExpr) -> Result<Vec<TExpr>, TypeError> {
+//         let (_, conditions) = self.canonicalize_expr(|_| expr.clone())?;
+//         Ok(conditions)
+//     }
+
+//     pub fn canonicalize_expr(
+//         &self,
+//         expr_factory: impl Fn(Type) -> TExpr,
+//     ) -> Result<(Type, Vec<TExpr>), TypeError> {
+//         match self.name.as_str() {
+//             "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "int" | "nat" => {
+//                 self.no_type_args()?;
+//                 let (lower, upper) = lookup_in_bounds(self.name.as_str());
+//                 Ok((
+//                     Type::basic("int"),
+//                     bounds_to_expr(lower, upper, expr_factory),
+//                 ))
+//             }
+//             "str" | "bool" | "void" => {
+//                 self.no_type_args()?;
+//                 Ok((self.clone(), vec![]))
+//             }
+//             "Vec" => {
+//                 let elem_type = self.one_type_arg()?;
+//                 let (type_lambda, elem_canon) = TEnv::type_lambda(&elem_type)?;
+//                 let vec_type = Type {
+//                     name: "Seq".to_owned(),
+//                     type_args: vec![TypeArg::Type(elem_canon.clone())],
+//                 };
+//                 let conds = if let Some(type_lambda) = type_lambda {
+//                     let array_expr = expr_factory(vec_type.clone());
+//                     vec![array_expr.seq_all(&type_lambda)?]
+//                 } else {
+//                     vec![]
+//                 };
+//                 Ok((vec_type, conds))
+//             }
+//             "Array" => {
+//                 let (elem_type, size) = self.one_type_one_u64_args()?;
+//                 if size > MAX_UNROLL {
+//                     return Err(TypeError {
+//                         message: format!(
+//                             "Array size {} exceeds maximum unroll limit {}",
+//                             size, MAX_UNROLL
+//                         ),
+//                     });
+//                 }
+//                 let elem_canon = elem_type.canonicalize_dummy()?;
+//                 let array_type = Type {
+//                     name: "Seq".to_owned(),
+//                     type_args: vec![TypeArg::Type(elem_canon)],
+//                 };
+//                 let array_expr = expr_factory(array_type.clone());
+//                 let mut conditions = vec![
+//                     array_expr
+//                         .seq_len()?
+//                         .eq(&TExpr::Literal(Literal::U64(size)))?,
+//                 ];
+//                 for i in 0..size {
+//                     let index_expr = TExpr::Literal(Literal::U64(i));
+//                     let elem_expr = array_expr.seq_at(&index_expr)?;
+//                     let condition = elem_type.canonicalize_const(&elem_expr)?;
+//                     conditions.extend_from_slice(&condition);
+//                 }
+//                 Ok((array_type, conditions))
+//             }
+//             _ => Err(TypeError {
+//                 message: format!("Cannot canonicalize user-defined type {}", self),
+//             }),
+//         }
+//     }
+//  }
+
 impl Type {
-    pub fn is_int(&self) -> bool {
-        self.name.as_str() == "int" && self.type_args.is_empty()
-    }
-
-    pub fn is_bool(&self) -> bool {
-        self.name.as_str() == "bool" && self.type_args.is_empty()
-    }
-
-    pub fn canonicalize(&self, name: &str) -> Result<(Type, Vec<TExpr>), TypeError> {
-        self.canonicalize_expr(|typ| TExpr::Variable {
-            name: name.to_owned(),
-            typ,
-        })
-    }
-
-    pub fn canonicalize_dummy(&self) -> Result<Type, TypeError> {
-        let (canon, _) = self.canonicalize_expr(|_| TExpr::Literal(Literal::Unit))?;
-        Ok(canon)
-    }
-
-    pub fn canonicalize_const(&self, expr: &TExpr) -> Result<Vec<TExpr>, TypeError> {
-        let (_, conditions) = self.canonicalize_expr(|_| expr.clone())?;
-        Ok(conditions)
-    }
-
-    pub fn canonicalize_expr(
-        &self,
-        expr_factory: impl Fn(Type) -> TExpr,
-    ) -> Result<(Type, Vec<TExpr>), TypeError> {
-        match self.name.as_str() {
-            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "int" | "nat" => {
-                self.no_type_args()?;
-                let (lower, upper) = lookup_in_bounds(self.name.as_str());
-                Ok((
-                    Type::basic("int"),
-                    bounds_to_expr(lower, upper, expr_factory),
-                ))
-            }
-            "str" | "bool" | "void" => {
-                self.no_type_args()?;
-                Ok((self.clone(), vec![]))
-            }
-            "Vec" => {
-                let elem_type = self.one_type_arg()?;
-                let (type_lambda, elem_canon) = TEnv::type_lambda(&elem_type)?;
-                let vec_type = Type {
-                    name: "Seq".to_owned(),
-                    type_args: vec![TypeArg::Type(elem_canon.clone())],
-                };
-                let conds = if let Some(type_lambda) = type_lambda {
-                    let array_expr = expr_factory(vec_type.clone());
-                    vec![array_expr.seq_all(&type_lambda)?]
-                } else {
-                    vec![]
-                };
-                Ok((vec_type, conds))
-            }
-            "Array" => {
-                let (elem_type, size) = self.one_type_one_u64_args()?;
-                if size > MAX_UNROLL {
-                    return Err(TypeError {
-                        message: format!(
-                            "Array size {} exceeds maximum unroll limit {}",
-                            size, MAX_UNROLL
-                        ),
-                    });
-                }
-                let elem_canon = elem_type.canonicalize_dummy()?;
-                let array_type = Type {
-                    name: "Seq".to_owned(),
-                    type_args: vec![TypeArg::Type(elem_canon)],
-                };
-                let array_expr = expr_factory(array_type.clone());
-                let mut conditions = vec![
-                    array_expr
-                        .seq_len()?
-                        .eq(&TExpr::Literal(Literal::U64(size)))?,
-                ];
-                for i in 0..size {
-                    let index_expr = TExpr::Literal(Literal::U64(i));
-                    let elem_expr = array_expr.seq_at(&index_expr)?;
-                    let condition = elem_type.canonicalize_const(&elem_expr)?;
-                    conditions.extend_from_slice(&condition);
-                }
-                Ok((array_type, conditions))
-            }
-            _ => Err(TypeError {
-                message: format!("Cannot canonicalize user-defined type {}", self),
-            }),
-        }
-    }
-
-    pub fn is_subtype_of(&self, other: &Type) -> bool {
-        if self == other {
-            return true;
-        }
-        if self.name == "EmptySeq" && other.name == "Seq" {
-            return true;
-        }
-        // if self.is_int() && other.is_int() {
-        //     let (self_min, self_max) = self.int_bounds();
-        //     let (other_min, other_max) = other.int_bounds();
-        //     if self_min >= other_min && self_max <= other_max {
-        //         return true;
-        //     }
-        // }
-        false
-    }
 
     pub fn find_equality_type(&self, other: &Type) -> Result<Type, TypeError> {
         self.find_common_type(other)
@@ -250,29 +166,6 @@ impl Type {
         Err(TypeError {
             message: format!("No common equality type found for {} and {}", self, other),
         })
-    }
-
-    pub fn no_type_args(&self) -> Result<(), TypeError> {
-        if !self.type_args.is_empty() {
-            return Err(TypeError {
-                message: format!("Type {} should not have type arguments", self),
-            });
-        }
-        Ok(())
-    }
-
-    pub fn one_type_arg(&self) -> Result<Type, TypeError> {
-        if self.type_args.len() != 1 {
-            return Err(TypeError {
-                message: format!("Type {} should have exactly one type argument", self),
-            });
-        }
-        match &self.type_args[0] {
-            TypeArg::Type(t) => Ok(t.clone()),
-            _ => Err(TypeError {
-                message: format!("Type argument of {} is not a Type", self),
-            }),
-        }
     }
 
     pub fn one_type_one_u64_args(&self) -> Result<(Type, u64), TypeError> {
@@ -386,82 +279,22 @@ impl Type {
     // }
 }
 
-impl TOverloadedFunc {
-    fn extract_single(&self) -> Result<&TFunc, TypeError> {
-        match self {
-            TOverloadedFunc::Finite(funcs) => {
-                if funcs.len() != 1 {
-                    return Err(TypeError {
-                        message: "Expected exactly one function overload".to_owned(),
-                    });
-                }
-                Ok(&funcs[0])
-            }
-            TOverloadedFunc::Equality => Err(TypeError {
-                message: "Expected exactly one function overload, found Equality".to_owned(),
-            }),
-        }
+pub fn big_and(exprs: &[TExpr]) -> Result<TExpr, TypeError> {
+    if exprs.is_empty() {
+        return Ok(TExpr::Literal(Literal::Bool(true)));
     }
-
-    fn mk_function_call(&self, name: &str, args: &[TExpr]) -> Result<TExpr, TypeError> {
-        match self {
-            TOverloadedFunc::Finite(funcs) => {
-                for func in funcs {
-                    if func.arg_types.len() != args.len() {
-                        continue;
-                    }
-                    let mut compatible = true;
-                    for (arg_type, param_type) in args.iter().zip(&func.arg_types) {
-                        if !arg_type.typ().is_subtype_of(param_type) {
-                            compatible = false;
-                            break;
-                        }
-                    }
-                    if compatible {
-                        let coerced_args = args
-                            .iter()
-                            .zip(&func.arg_types)
-                            .map(|(arg, param_type)| arg.coerce(param_type))
-                            .collect::<Result<Vec<TExpr>, TypeError>>()?;
-                        return Ok(TExpr::FunctionCall {
-                            name: name.to_owned(),
-                            args: coerced_args,
-                            return_type: func.return_type.clone(),
-                        });
-                    }
-                }
-                Err(TypeError {
-                    message: format!(
-                        "No matching function overload found for {} with given argument types {}",
-                        name,
-                        display_texprs(args)
-                    ),
-                })
-            }
-            TOverloadedFunc::Equality => {
-                if args.len() != 2 {
-                    return Err(TypeError {
-                        message: "Equality function requires exactly 2 arguments".to_owned(),
-                    });
-                }
-                let eqt = args[0].typ().find_equality_type(&args[1].typ())?;
-                let arg0 = args[0].coerce(&eqt)?;
-                let arg1 = args[1].coerce(&eqt)?;
-                Ok(TExpr::FunctionCall {
-                    name: name.to_owned(),
-                    args: vec![arg0, arg1],
-                    return_type: Type::basic("bool"),
-                })
-            }
-        }
+    let mut result = exprs[0].clone();
+    for e in &exprs[1..] {
+        result = result.and(e)?;
     }
+    Ok(result)
 }
 
 impl TExpr {
     /// Won't necessarily return something with the "exact" correct type
     /// but will coerce empty sequences to a typed sequence.
     pub fn coerce(&self, target_type: &Type) -> Result<TExpr, TypeError> {
-        if !self.typ().is_subtype_of(target_type) {
+        if !self.typ().compatible_with(target_type) {
             return Err(TypeError {
                 message: format!("Cannot coerce type {} to {}", self.typ(), target_type),
             });
@@ -623,11 +456,10 @@ impl Expr {
         match self {
             Expr::Literal(lit) => Ok(TExpr::Literal(lit.clone())),
             Expr::Variable(x) => {
-                if let Some(var_type) = env.variables.get(x) {
-                    let (canon, _) = var_type.canonicalize(x)?;
+                if let Some(typ) = env.variables.get(x) {
                     Ok(TExpr::Variable {
                         name: x.clone(),
-                        typ: canon,
+                        typ: typ.clone(),
                     })
                 } else {
                     Err(TypeError {
@@ -647,15 +479,19 @@ impl Expr {
                     .iter()
                     .map(|a| a.type_check(env))
                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
-                overloaded.mk_function_call(name, &targs)
+                let ret_type = overloaded.lookup_return_type(
+                    &targs.iter().map(|a| a.typ()).collect::<Vec<Type>>(),
+                )?;
+                return Ok(TExpr::FunctionCall {
+                        name: name.to_owned(),
+                        args: targs,
+                        return_type: ret_type,
+                    });
             }
             Expr::Semicolon(stmt, expr) => {
-                let tstmts = stmt.type_check(env)?;
-                let mut texpr = expr.type_check(env)?;
-                for tstmt in tstmts.iter().rev() {
-                    texpr = TExpr::Semicolon(Box::new(tstmt.clone()), Box::new(texpr));
-                }
-                Ok(texpr)
+                let tstmt = stmt.type_check(env)?;
+                let texpr = expr.type_check(env)?;
+                Ok(TExpr::Semicolon(Box::new(tstmt.clone()), Box::new(texpr)))
             }
             Expr::Sequence(elems) => {
                 if elems.is_empty() {
@@ -727,27 +563,27 @@ impl AssignOp {
 }
 
 impl Stmt {
-    fn type_check(&self, env: &mut TEnv) -> Result<Vec<TStmt>, TypeError> {
+    fn type_check(&self, env: &mut TEnv) -> Result<TStmt, TypeError> {
         match self {
             Stmt::Expr(e) => {
                 let te = e.type_check(env)?;
-                Ok(vec![TStmt::Expr(te)])
+                Ok(TStmt::Expr(te))
             }
             Stmt::Let { name, value } => {
                 let tvalue = value.type_check(env)?;
                 let vtype = tvalue.typ();
                 env.variables.insert(name.clone(), vtype.clone());
-                Ok(vec![TStmt::Let {
+                Ok(TStmt::Let {
                     name: name.clone(),
                     typ: vtype,
                     mutable: false,
+                    type_declared: false,
                     value: tvalue,
-                }])
+                })
             }
             Stmt::LetMut { name, typ, value } => {
                 let tvalue = value.type_check(env)?;
-                let (tcanon, tcond) = typ.canonicalize(name)?;
-                if !tvalue.typ().is_subtype_of(&tcanon) {
+                if !tvalue.typ().compatible_with(&typ) {
                     return Err(TypeError {
                         message: format!(
                             "Type of value {} does not match declared type {} for variable {}",
@@ -758,29 +594,25 @@ impl Stmt {
                     });
                 }
                 env.variables.insert(name.clone(), typ.clone());
-                let mut stmts = vec![TStmt::Let {
+                Ok(TStmt::Let {
                     name: name.clone(),
-                    typ: tcanon,
+                    typ: typ.clone(),
                     mutable: true,
+                    type_declared: true,
                     value: tvalue,
-                }];
-                for assertion in tcond {
-                    stmts.push(assertion.as_assertion());
-                }
-                Ok(stmts)
+                })
             }
             Stmt::Assign { name, op, value } => {
                 let tvalue = value.type_check(env)?;
-                let var_typex = env.variables.get(name).ok_or(TypeError {
+                let var_type = env.variables.get(name).ok_or(TypeError {
                     message: format!("Undefined variable: {}", name),
                 })?;
-                let (var_type, assertions) = var_typex.canonicalize(name)?;
                 let old_left = TExpr::Variable {
                     name: name.clone(),
                     typ: var_type.clone(),
                 };
                 let result = op.mk_expr(&old_left, &tvalue)?;
-                if !result.typ().is_subtype_of(&var_type) {
+                if !result.typ().compatible_with(&var_type) {
                     return Err(TypeError {
                         message: format!(
                             "Resulting type of assignment does not match variable type for {}",
@@ -788,14 +620,11 @@ impl Stmt {
                         ),
                     });
                 }
-                let mut stmts = vec![TStmt::Assign {
+                Ok(TStmt::Assign {
                     name: name.clone(),
+                    typ: var_type.clone(),
                     value: result,
-                }];
-                for assertion in assertions {
-                    stmts.push(assertion.as_assertion());
-                }
-                Ok(stmts)
+                })
             }
         }
     }
@@ -804,27 +633,16 @@ impl Stmt {
 impl FuncDef {
     fn decl(&self) -> Result<TOverloadedFunc, TypeError> {
         let mut arg_types = vec![];
-        let mut arg_preconditions = vec![];
         for a in &self.args {
-            let (arg_type, precond) = a.arg_type.canonicalize(&a.name)?;
-            arg_types.push(arg_type);
-            arg_preconditions.extend(precond);
+            arg_types.push(a.arg_type.clone());
         }
-        let return_name = self.return_name.as_deref().unwrap_or("__ret__");
-        let (return_type, return_postconditions) = self.return_type.canonicalize(return_name)?;
-        let tfunc = TFunc {
-            arg_types,
-            return_type,
-            return_name: return_name.to_owned(),
-            arg_preconditions,
-            return_postconditions,
-        };
-        Ok(TOverloadedFunc::Finite(vec![tfunc]))
+        let return_type = self.return_type.clone();
+        Ok(TOverloadedFunc::simple(&arg_types, &return_type))
     }
 
     fn type_check(&self, env: &mut TEnv) -> Result<TFuncDef, TypeError> {
         let mut local_env = env.clone();
-        let decl = env
+        let decl = &env
             .functions
             .get(&self.name)
             .ok_or(TypeError {
@@ -833,7 +651,7 @@ impl FuncDef {
                     self.name
                 ),
             })?
-            .extract_single()?;
+            .extract_single()?.headline;
         assert!(decl.arg_types.len() == self.args.len());
         for (a, t) in self.args.iter().zip(&decl.arg_types) {
             if local_env.variables.contains_key(&a.name) {
@@ -845,7 +663,7 @@ impl FuncDef {
         }
         let args_env = local_env.clone();
         let tbody = self.body.type_check(&mut local_env)?;
-        if !tbody.typ().is_subtype_of(&decl.return_type) {
+        if !tbody.typ().compatible_with(&decl.return_type) {
             return Err(TypeError {
                 message: format!(
                     "Function {} body type {} does not match declared return type {}",
@@ -855,8 +673,8 @@ impl FuncDef {
                 ),
             });
         }
-        let mut preconditions = decl.arg_preconditions.clone();
-        let mut postconditions = decl.return_postconditions.clone();
+        let mut preconditions = vec![];
+        let mut postconditions = vec![];
         let sees = self.sees.clone();
         preconditions.extend(
             self.preconditions
@@ -865,9 +683,11 @@ impl FuncDef {
                 .collect::<Result<Vec<TExpr>, TypeError>>()?,
         );
         let mut post_args_env = args_env.clone();
-        post_args_env
-            .variables
-            .insert(decl.return_name.clone(), decl.return_type.clone());
+        if self.return_name.is_some() {
+            post_args_env
+                .variables
+                .insert(self.return_name.clone().unwrap(), decl.return_type.clone());
+        }
         postconditions.extend(
             self.postconditions
                 .iter()
@@ -888,7 +708,7 @@ impl FuncDef {
             name: self.name.clone(),
             args,
             return_type: decl.return_type.clone(),
-            return_name: decl.return_name.clone(),
+            return_name: self.return_name.clone().unwrap_or_else(||"__ret__".to_owned()),
             preconditions,
             postconditions,
             sees,
@@ -925,94 +745,15 @@ impl TEnv {
             body: Box::new(body),
         }
     }
-
-    fn type_lambda(typ: &Type) -> Result<(Option<TExpr>, Type), TypeError> {
-        let (canon, conds) = typ.canonicalize("__item__")?;
-        if conds.is_empty() {
-            return Ok((None, canon));
-        }
-        Ok((
-            Some(TExpr::Lambda {
-                args: vec![Arg {
-                    name: "__item__".to_owned(),
-                    arg_type: canon.clone(),
-                }],
-                body: Box::new(big_and(&conds)?),
-            }),
-            canon,
-        ))
-    }
-}
-
-pub fn big_and(exprs: &[TExpr]) -> Result<TExpr, TypeError> {
-    if exprs.is_empty() {
-        return Ok(TExpr::Literal(Literal::Bool(true)));
-    }
-    let mut result = exprs[0].clone();
-    for e in &exprs[1..] {
-        result = result.and(e)?;
-    }
-    Ok(result)
 }
 
 impl SourceFile {
     pub fn type_check(&self) -> Result<TSourceFile, TypeError> {
         let mut env = TEnv {
             variables: HashMap::new(),
-            functions: HashMap::new(),
+            functions: builtins(),
         };
 
-        let tint = Type::basic("int");
-        let tbool = Type::basic("bool");
-        let int_rel = TFunc::new(&[tint.clone(), tint.clone()], &tbool);
-        let int_binop = TFunc::new(&[tint.clone(), tint.clone()], &tint);
-        let print_sig = TFunc::new(&[Type::basic("str")], &Type::basic("void"));
-        let assert_sig = TFunc::new(from_ref(&tbool), &Type::basic("void"));
-        let bool_op = TFunc::new(&[tbool.clone(), tbool.clone()], &tbool);
-        env.functions
-            .insert("==".to_owned(), TOverloadedFunc::Equality);
-        env.functions
-            .insert("!=".to_owned(), TOverloadedFunc::Equality);
-        env.functions.insert(
-            "<".to_owned(),
-            TOverloadedFunc::Finite(vec![int_rel.clone()]),
-        );
-        env.functions.insert(
-            "<=".to_owned(),
-            TOverloadedFunc::Finite(vec![int_rel.clone()]),
-        );
-        env.functions.insert(
-            ">".to_owned(),
-            TOverloadedFunc::Finite(vec![int_rel.clone()]),
-        );
-        env.functions.insert(
-            ">=".to_owned(),
-            TOverloadedFunc::Finite(vec![int_rel.clone()]),
-        );
-        env.functions.insert(
-            "+".to_owned(),
-            TOverloadedFunc::Finite(vec![int_binop.clone()]),
-        );
-        env.functions.insert(
-            "-".to_owned(),
-            TOverloadedFunc::Finite(vec![int_binop.clone()]),
-        );
-        env.functions.insert(
-            "&&".to_owned(),
-            TOverloadedFunc::Finite(vec![bool_op.clone()]),
-        );
-        env.functions.insert(
-            "||".to_owned(),
-            TOverloadedFunc::Finite(vec![bool_op.clone()]),
-        );
-        env.functions.insert(
-            "println".to_owned(),
-            TOverloadedFunc::Finite(vec![print_sig.clone()]),
-        );
-        env.functions.insert(
-            "assert".to_owned(),
-            TOverloadedFunc::Finite(vec![assert_sig.clone()]),
-        );
         // env.functions.insert("seq_at".to_owned(), TOverloadedFunc::Finite(vec![]));
         // env.functions.insert("seq_len".to_owned(), TOverloadedFunc::Finite(vec![]));
 

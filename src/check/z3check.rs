@@ -8,8 +8,7 @@ use std::{
 
 use crate::{
     check::{
-        ztype_ast::{TExpr, TFuncDef, TStmt},
-        ztype_inference::TypeError,
+        builtins, overloads::{TFunc, TOptimizedFunc, TOverloadedFunc}, ztype_ast::{TExpr, TFuncDef, TStmt}, ztype_inference::TypeError
     },
     syntax::ast::*,
 };
@@ -70,6 +69,7 @@ struct Env {
     vars: HashMap<String, CheckedVar>,
     assumptions: Vec<z3::ast::Bool>,
     side_effects: HashSet<String>,
+    builtins: HashMap<String, TOverloadedFunc>,
     other_funcs: Vec<CheckedFunction>,
     verbosity: u8,
 }
@@ -159,45 +159,42 @@ impl Literal {
 
 impl Type {
     fn to_z3_sort(&self) -> Result<z3::Sort, CheckError> {
-        match self.name.as_str() {
-            "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "nat" | "int" => {
-                Ok(z3::Sort::int())
-            }
-            "bool" => Ok(z3::Sort::bool()),
-            "str" => Ok(z3::Sort::string()),
-            "void" => Ok(z3::Sort::int()), // using int as dummy sort for void
-            _ => Err(CheckError {
+        if self.is_int() {
+            return Ok(z3::Sort::int());
+        } else if self.is_bool() {
+            return Ok(z3::Sort::bool());
+        } else if self.is_str() {
+            return Ok(z3::Sort::string());
+        } else if self.is_void() {
+            return Ok(void_value().get_sort())
+        } else if self.is_named_seq() {
+            let elem_type = self.one_type_arg()?;
+            let elem_sort = elem_type.to_z3_sort()?;
+            return Ok(z3::Sort::seq(&elem_sort));
+        } else {
+            return Err(CheckError {
                 message: format!("Unsupported type for to_z3_sort: {}", self),
-            }),
+            });
         }
     }
 
     fn to_z3_const(&self, name: &str) -> Result<Dynamic, CheckError> {
-        match self.name.as_str() {
-            // "u8" | "i8" | "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "nat" | "int" =>
-            //     Ok(z3::ast::Int::new_const(name).into()),
-            "int" => Ok(z3::ast::Int::new_const(name).into()),
-            "bool" => Ok(z3::ast::Bool::new_const(name).into()),
-            "str" => Ok(z3::ast::String::new_const(name).into()),
-            "void" => Ok(void_value()),
-            "Seq" => {
-                let elem_type = self.one_type_arg()?;
-                let elem_sort = elem_type.to_z3_sort()?;
-                Ok(z3::ast::Seq::new_const(name, &elem_sort).into())
-            }
-            // "Array" => {
-            //     if let Some(TypeArg::Type(elem_type)) = self.type_args.get(0) {
-            //         let elem_sort = elem_type.to_z3_sort()?;
-            //         Ok(Z3Value::Array(z3::ast::Seq::new_const(name, &elem_sort), elem_type.clone()))
-            //     } else {
-            //         Err(CheckError {
-            //             message: "Array type missing element type".to_owned(),
-            //         })
-            //     }
-            // }
-            _ => Err(CheckError {
+        if self.is_int() {
+            return Ok(z3::ast::Int::new_const(name).into());
+        } else if self.is_bool() {
+            return Ok(z3::ast::Bool::new_const(name).into());
+        } else if self.is_str() {
+            return Ok(z3::ast::String::new_const(name).into());
+        } else if self.is_void() {
+            return Ok(void_value());
+        } else if self.is_named_seq() {
+            let elem_type = self.one_type_arg()?;
+            let elem_sort = elem_type.to_z3_sort()?;
+            return Ok(z3::ast::Seq::new_const(name, &elem_sort).into());
+        } else {
+            return Err(CheckError {
                 message: format!("Unsupported type for to_z3_const: {}", self),
-            }),
+            });
         }
     }
 }
@@ -213,6 +210,7 @@ impl Env {
             vars: HashMap::new(),
             assumptions: Vec::new(),
             side_effects: HashSet::new(),
+            builtins: builtins::builtins(),
             other_funcs: other_funcs_visible,
             verbosity,
         }
@@ -403,14 +401,24 @@ impl TStmt {
                 typ,
                 value,
                 mutable,
+                ..
             } => {
                 let z3_value = value.z3_check(env)?;
                 let z3_var = env.insert_var(name, *mutable, typ)?;
-                // typ.check_value(&z3_var, env)?;
                 env.assume(z3_var.safe_eq(&z3_value)?);
+                // check the type
+                for type_assertion in &typ.type_assertions(
+                    TExpr::Variable {
+                        name: name.clone(),
+                        typ: typ.clone(),
+                    }
+                ) {
+                    let cond_z3_value = type_assertion.z3_check(env)?;
+                    env.assert(&boolean(&cond_z3_value)?, "Type assertion failed in let")?;
+                }
                 Ok(())
             }
-            TStmt::Assign { name, value } => {
+            TStmt::Assign { name, value, .. } => {
                 let z3_value = value.z3_check(env)?;
                 env.assign(name, z3_value)
             }
@@ -444,7 +452,6 @@ fn void_value() -> Dynamic {
 fn z3_function_call(
     name: &str,
     args: &[Dynamic],
-    _return_type: &Type,
     env: &mut Env,
 ) -> Result<Dynamic, CheckError> {
     // TODO: check return type is correct?
@@ -480,7 +487,7 @@ fn z3_function_call(
                 message: "Expected Seq type for seq_at".to_owned(),
             })?;
             let index_arg = int(&args[1])?;
-            Ok(seq_arg.nth(&index_arg))
+            Ok(seq_arg.nth(&index_arg).into())
         }
         ("seq_map", 2) => {
             let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
@@ -523,6 +530,17 @@ fn z3_function_call(
                     let cond_z3_value = postcondition.z3_check(&mut call_env)?;
                     call_env.assume(boolean(&cond_z3_value)?);
                 }
+                // assume any conditions on the return type
+                let return_type_conds = user_func.return_type.type_assertions(
+                    TExpr::Variable {
+                        name: user_func.return_value.clone(),
+                        typ: user_func.return_type.clone(),
+                    }
+                );
+                for cond in return_type_conds {
+                    let cond_z3_value = cond.z3_check(&mut call_env)?;
+                    call_env.assume(boolean(&cond_z3_value)?);
+                }
                 // don't forget the side effects
                 for effect in &user_func.side_effects {
                     call_env.side_effects.insert(effect.clone());
@@ -551,21 +569,53 @@ fn z3_function_call(
     }
 }
 
+impl Env {
+    fn get_overloaded_func(&self, name: &str) -> Result<TOverloadedFunc, CheckError> {
+        if self.builtins.contains_key(name) {
+            Ok(self.builtins.get(name).unwrap().clone())
+        } else {
+            let func = self
+                .other_funcs
+                .iter()
+                .find(|f| f.name == name)
+                .ok_or(CheckError {
+                    message: format!("Undefined function: {}", name),
+                })?;
+            Ok(TOverloadedFunc(vec![TOptimizedFunc {
+                headline: TFunc {
+                    arg_types: func.args.iter().map(|a| a.arg_type.clone()).collect(),
+                    return_type: func.return_type.clone(),
+                },
+                optimizations: vec![]
+            }]))
+        }
+    }
+}
+
 impl TExpr {
     fn z3_check(&self, env: &mut Env) -> Result<Dynamic, CheckError> {
+        // println!("Z3 checking expr: {}", self);
         match self {
             TExpr::Literal(literal) => literal.z3_check(),
             TExpr::Variable { name, .. } => env.get_var(name),
             TExpr::FunctionCall {
                 name,
                 args,
-                return_type,
+                ..
             } => {
                 let z3args = args
                     .iter()
                     .map(|arg| arg.z3_check(env))
                     .collect::<Result<Vec<_>, _>>()?;
-                z3_function_call(name, &z3args, return_type, env)
+                let func:TOverloadedFunc = env.get_overloaded_func(name)?;
+                let type_preconditions = func.lookup_type_preconditions(&args)?;
+                // println!("Begin precondtion check for function call {}", name);
+                for cond in type_preconditions {
+                    let cond_z3_value = cond.z3_check(env)?;
+                    env.assert(&boolean(&cond_z3_value)?, "Type precondition failed")?;
+                }
+                // println!("End precondtion check");
+                z3_function_call(name, &z3args, env)
             }
             TExpr::Semicolon(stmt, expr) => {
                 stmt.z3_check(env)?;
@@ -625,8 +675,17 @@ fn z3_check_funcdef(
     }
     let mut env = Env::new(other_funcs, &func.sees, verbosity);
     for arg in &func.args {
-        let _arg_var = env.insert_var(&arg.name, false, &arg.arg_type)?;
-        // arg.arg_type.check_or_assume_value(&arg_var, &mut env, AssertMode::Assume)?;
+        let arg_var = env.insert_var(&arg.name, false, &arg.arg_type)?;
+        // assume the type assertions on the argument
+        for type_assertion in &arg.arg_type.type_assertions(
+            TExpr::Variable {
+                name: arg.name.clone(),
+                typ: arg.arg_type.clone(),
+            }
+        ) {
+            let cond_z3_value = type_assertion.z3_check(&mut env)?;
+            env.assume(boolean(&cond_z3_value)?);
+        }
     }
     for precondition in &func.preconditions {
         let cond_z3_value = precondition.z3_check(&mut env)?;
