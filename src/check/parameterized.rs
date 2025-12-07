@@ -111,6 +111,13 @@ impl ParameterizedType {
         ParameterizedType::Named(name.to_owned(), vec![])
     }
 
+    pub fn lambda_type(arg_types: &[ParameterizedType], return_type: &ParameterizedType) -> Self {
+        let mut args = arg_types.iter().map(|t| ParameterizedTypeArg::Type(t.clone())).collect::<Vec<ParameterizedTypeArg>>();
+        let ret = ParameterizedTypeArg::Type(return_type.clone());
+        args.push(ret);
+        ParameterizedType::Named("Lambda".to_owned(), args)
+    }
+
     pub fn to_type(&self) -> Result<Type, TypeError> {
         match self {
             ParameterizedType::Param(name) => Err(TypeError {

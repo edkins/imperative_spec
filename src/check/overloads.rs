@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{check::{parameterized::ParameterizedType, ztype_ast::TExpr, ztype_inference::TypeError}, syntax::ast::{Bound, Type, TypeArg}};
+use crate::{check::{parameterized::{ParameterizedType, ParameterizedTypeArg}, ztype_ast::TExpr, ztype_inference::TypeError}, syntax::ast::{Bound, Type, TypeArg}};
 
 #[derive(Clone)]
 pub struct TFunc {

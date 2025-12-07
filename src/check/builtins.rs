@@ -9,9 +9,14 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     let tstr = ParameterizedType::basic("str");
     let tvoid = ParameterizedType::basic("void");
     let tparam = ParameterizedType::Param("T".to_owned());
+    let uparam = ParameterizedType::Param("U".to_owned());
     let seqt = ParameterizedType::Named(
         "Seq".to_owned(),
         vec![ParameterizedTypeArg::Type(tparam.clone())],
+    );
+    let sequ = ParameterizedType::Named(
+        "Seq".to_owned(),
+        vec![ParameterizedTypeArg::Type(uparam.clone())],
     );
     let int_rel = TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tbool);
     let int_binop = TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tint);
@@ -78,6 +83,26 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     functions.insert(
         "seq_len".to_owned(),
         TOverloadedFunc::psimple(from_ref(&seqt), &tint),
+    );
+    functions.insert(
+        "seq_map".to_owned(),
+        TOverloadedFunc::psimple(
+            &[seqt.clone(), ParameterizedType::lambda_type(from_ref(&tparam), &uparam)],
+            &sequ,
+        )
+    );
+    functions.insert(
+        "seq_foldl".to_owned(),
+        TOverloadedFunc::psimple(
+            &[
+                seqt.clone(),
+                ParameterizedType::lambda_type(
+                    &[uparam.clone(), tparam.clone()],
+                    &uparam,
+                ),
+                uparam.clone()],
+            &uparam,
+        )
     );
     functions
 }

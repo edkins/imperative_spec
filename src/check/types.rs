@@ -43,6 +43,29 @@ impl Type {
         }
     }
 
+    pub fn condless(&self) -> bool {
+        if matches!(self.name.as_str(), "int" | "z8" | "z16" | "z32" | "z64" | "str" | "bool" | "void" | "EmptySeq") && self.type_args.is_empty() {
+            return true;
+        }
+        if let Some(elem) = self.get_named_seq() {
+            return elem.condless();
+        }
+        if self.name == "Lambda" {
+            for arg in &self.type_args {
+                match arg {
+                    TypeArg::Type(t) => {
+                        if !t.condless() {
+                            return false;
+                        }
+                    }
+                    TypeArg::Bound(_) => {}
+                }
+            }
+            return true;
+        }
+        false
+    }
+
     pub fn type_assertions(&self, expr: TExpr) -> Result<Vec<TExpr>, TypeError> {
         match self.name.as_str() {
             "int" | "nat" | "z8" | "z16" | "z32" | "z64" | "i8" | "i16" | "i32" | "i64" | "u8"
@@ -86,6 +109,15 @@ impl Type {
                 }
             }
             "str" | "bool" | "void" => Ok(vec![]),
+            "Lambda" => {
+                if self.condless() {
+                    Ok(vec![])
+                } else {
+                    Err(TypeError {
+                        message: format!("Cannot generate type assertions for conditioned lambda type {}", self),
+                    })
+                }
+            }
             _ => Err(TypeError {
                 message: format!("Unknown type for type assertions: {}", self),
             }),
