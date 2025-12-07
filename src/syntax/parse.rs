@@ -334,7 +334,7 @@ fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
     move |input: &str| {
         let (input, _) = symbol(Symbol::Semicolon)(input)?;
         let (input, right) = opt(expr).parse(input)?;
-        let right = right.unwrap_or_else(|| Expr::Literal(Literal::Unit));
+        let right = right.unwrap_or(Expr::Literal(Literal::Unit));
         Ok((
             input,
             Expr::Semicolon(Box::new(Stmt::Expr(left.clone())), Box::new(right)),

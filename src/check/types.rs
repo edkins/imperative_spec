@@ -243,7 +243,7 @@ impl Type {
         if let Some(self_elem) = self.get_named_seq()
             && let Some(other_elem) = other.get_named_seq()
         {
-            return self_elem.compatible_with(&other_elem);
+            return self_elem.compatible_with(other_elem);
         }
         false
     }

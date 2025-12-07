@@ -49,14 +49,14 @@ impl std::fmt::Display for ParameterizedTypeArg {
 impl ParameterizedTypeArg {
     pub fn to_type(&self) -> Result<TypeArg, TypeError> {
         match self {
-            ParameterizedTypeArg::Bound(b) => Ok(TypeArg::Bound(b.clone())),
+            ParameterizedTypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
             ParameterizedTypeArg::Type(t) => Ok(TypeArg::Type(t.to_type()?)),
         }
     }
 
     pub fn from_type(type_arg: &TypeArg) -> Self {
         match type_arg {
-            TypeArg::Bound(b) => ParameterizedTypeArg::Bound(b.clone()),
+            TypeArg::Bound(b) => ParameterizedTypeArg::Bound(*b),
             TypeArg::Type(t) => ParameterizedTypeArg::Type(ParameterizedType::from_type(t)),
         }
     }
@@ -93,7 +93,7 @@ impl ParameterizedTypeArg {
 
     pub fn instantiate(&self, mapping: &HashMap<String, Type>) -> Result<TypeArg, TypeError> {
         match self {
-            ParameterizedTypeArg::Bound(b) => Ok(TypeArg::Bound(b.clone())),
+            ParameterizedTypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
             ParameterizedTypeArg::Type(t) => {
                 let concrete_type = t.instantiate(mapping)?;
                 Ok(TypeArg::Type(concrete_type))
@@ -103,7 +103,7 @@ impl ParameterizedTypeArg {
 
     pub fn most_general(&self) -> Result<Self, TypeError> {
         match self {
-            ParameterizedTypeArg::Bound(b) => Ok(ParameterizedTypeArg::Bound(b.clone())),
+            ParameterizedTypeArg::Bound(b) => Ok(ParameterizedTypeArg::Bound(*b)),
             ParameterizedTypeArg::Type(t) => {
                 let general_type = t.most_general()?;
                 Ok(ParameterizedTypeArg::Type(general_type))
@@ -149,7 +149,7 @@ impl ParameterizedType {
         let params = typ
             .type_args
             .iter()
-            .map(|ta| ParameterizedTypeArg::from_type(ta))
+            .map(ParameterizedTypeArg::from_type)
             .collect::<Vec<ParameterizedTypeArg>>();
         ParameterizedType::Named(typ.name.clone(), params)
     }

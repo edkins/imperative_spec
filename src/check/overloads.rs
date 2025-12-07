@@ -1,11 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    check::{
-        parameterized::{ParameterizedType},
-        ztype_ast::TExpr,
-        ztype_inference::TypeError,
-    },
+    check::{parameterized::ParameterizedType, ztype_ast::TExpr, ztype_inference::TypeError},
     syntax::ast::Type,
 };
 
@@ -31,20 +27,11 @@ pub struct TOptimizedFunc {
 #[derive(Clone)]
 pub struct TOverloadedFunc(pub Vec<TOptimizedFunc>);
 
-// impl TFunc {
-//     fn new(args_types: &[ParameterizedType], return_type: &ParameterizedType) -> Self {
-//         TFunc {
-//             arg_types: args_types.to_vec(),
-//             return_type: return_type.clone(),
-//         }
-//     }
-// }
-
 impl TOverloadedFunc {
     pub fn simple(arg_types: &[Type], return_type: &Type) -> Self {
         let arg_types = arg_types
             .iter()
-            .map(|t| ParameterizedType::from_type(t))
+            .map(ParameterizedType::from_type)
             .collect::<Vec<ParameterizedType>>();
         let return_type = ParameterizedType::from_type(return_type);
         TOverloadedFunc(vec![TOptimizedFunc {
@@ -98,7 +85,7 @@ impl TOverloadedFunc {
                 }
             }
             if compatible {
-                return Ok(headline.return_type.instantiate(&mapping)?);
+                return headline.return_type.instantiate(&mapping);
             }
         }
         Err(TypeError {

@@ -4,9 +4,7 @@ use std::slice::from_ref;
 use crate::check::builtins::builtins;
 use crate::check::overloads::TOverloadedFunc;
 use crate::check::ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt};
-use crate::syntax::ast::{
-    Arg, AssignOp, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg,
-};
+use crate::syntax::ast::{Arg, AssignOp, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -19,15 +17,6 @@ impl std::fmt::Display for TypeError {
     }
 }
 impl std::error::Error for TypeError {}
-
-// #[derive(Clone)]
-// struct TFunc {
-//     arg_types: Vec<Type>,
-//     return_type: Type,
-//     return_name: String,
-//     arg_preconditions: Vec<TExpr>,
-//     return_postconditions: Vec<TExpr>,
-// }
 
 #[derive(Clone)]
 struct TEnv {
@@ -182,9 +171,9 @@ impl TExpr {
                 return_type: elem_type.clone(),
             })
         } else {
-            return Err(TypeError {
+            Err(TypeError {
                 message: format!("seq_at called on non-sequence type {}", self.typ()),
-            });
+            })
         }
     }
 
@@ -220,9 +209,9 @@ impl TExpr {
                 },
             })
         } else {
-            return Err(TypeError {
+            Err(TypeError {
                 message: format!("seq_map called on non-sequence type {}", self.typ()),
-            });
+            })
         }
     }
 
@@ -259,9 +248,9 @@ impl TExpr {
                 return_type,
             })
         } else {
-            return Err(TypeError {
+            Err(TypeError {
                 message: format!("seq_foldl called on non-sequence type {}", self.typ()),
-            });
+            })
         }
     }
 
@@ -272,7 +261,7 @@ impl TExpr {
         if let Some(elem_type) = self.typ().get_named_seq() {
             if !predicate
                 .typ()
-                .call_lambda(from_ref(&elem_type))?
+                .call_lambda(from_ref(elem_type))?
                 .is_subtype_of(&Type::basic("bool"))
             {
                 return Err(TypeError {
@@ -285,9 +274,9 @@ impl TExpr {
             self.seq_map(predicate)?
                 .seq_foldl(&TEnv::and_lambda(), &TExpr::Literal(Literal::Bool(true)))
         } else {
-            return Err(TypeError {
+            Err(TypeError {
                 message: format!("seq_all called on non-sequence type {}", self.typ()),
-            });
+            })
         }
     }
 }
@@ -322,11 +311,11 @@ impl Expr {
                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
                 let ret_type = overloaded
                     .lookup_return_type(&targs.iter().map(|a| a.typ()).collect::<Vec<Type>>())?;
-                return Ok(TExpr::FunctionCall {
+                Ok(TExpr::FunctionCall {
                     name: name.to_owned(),
                     args: targs,
                     return_type: ret_type,
-                });
+                })
             }
             Expr::Semicolon(stmt, expr) => {
                 let tstmt = stmt.type_check(env)?;
@@ -423,7 +412,7 @@ impl Stmt {
             }
             Stmt::LetMut { name, typ, value } => {
                 let tvalue = value.type_check(env)?;
-                if !tvalue.typ().compatible_with(&typ) {
+                if !tvalue.typ().compatible_with(typ) {
                     return Err(TypeError {
                         message: format!(
                             "Type of value {} does not match declared type {} for variable {}",
@@ -452,7 +441,7 @@ impl Stmt {
                     typ: var_type.clone(),
                 };
                 let result = op.mk_expr(&old_left, &tvalue)?;
-                if !result.typ().compatible_with(&var_type) {
+                if !result.typ().compatible_with(var_type) {
                     return Err(TypeError {
                         message: format!(
                             "Resulting type of assignment does not match variable type for {}",

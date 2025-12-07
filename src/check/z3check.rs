@@ -166,40 +166,40 @@ impl Literal {
 impl Type {
     fn to_z3_sort(&self) -> Result<z3::Sort, CheckError> {
         if self.is_int() {
-            return Ok(z3::Sort::int());
+            Ok(z3::Sort::int())
         } else if self.is_bool() {
-            return Ok(z3::Sort::bool());
+            Ok(z3::Sort::bool())
         } else if self.is_str() {
-            return Ok(z3::Sort::string());
+            Ok(z3::Sort::string())
         } else if self.is_void() {
-            return Ok(void_value().get_sort());
+            Ok(void_value().get_sort())
         } else if self.is_named_seq() {
             let elem_type = self.one_type_arg()?;
             let elem_sort = elem_type.to_z3_sort()?;
-            return Ok(z3::Sort::seq(&elem_sort));
+            Ok(z3::Sort::seq(&elem_sort))
         } else {
-            return Err(CheckError {
+            Err(CheckError {
                 message: format!("Unsupported type for to_z3_sort: {}", self),
-            });
+            })
         }
     }
 
     fn to_z3_const(&self, name: &str) -> Result<Dynamic, CheckError> {
         if self.is_int() {
-            return Ok(z3::ast::Int::new_const(name).into());
+            Ok(z3::ast::Int::new_const(name).into())
         } else if self.is_bool() {
-            return Ok(z3::ast::Bool::new_const(name).into());
+            Ok(z3::ast::Bool::new_const(name).into())
         } else if self.is_str() {
-            return Ok(z3::ast::String::new_const(name).into());
+            Ok(z3::ast::String::new_const(name).into())
         } else if self.is_void() {
-            return Ok(void_value());
+            Ok(void_value())
         } else if let Some(elem_type) = self.get_named_seq() {
             let elem_sort = elem_type.to_z3_sort()?;
-            return Ok(z3::ast::Seq::new_const(name, &elem_sort).into());
+            Ok(z3::ast::Seq::new_const(name, &elem_sort).into())
         } else {
-            return Err(CheckError {
+            Err(CheckError {
                 message: format!("Unsupported type for to_z3_const: {}", self),
-            });
+            })
         }
     }
 }
@@ -499,7 +499,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
                 message: "Expected Seq type for seq_at".to_owned(),
             })?;
             let index_arg = int(&args[1])?;
-            Ok(seq_arg.nth(&index_arg).into())
+            Ok(seq_arg.nth(&index_arg))
         }
         ("seq_map", 2) => {
             let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
@@ -615,7 +615,7 @@ impl TExpr {
                     .map(|arg| arg.z3_check(env))
                     .collect::<Result<Vec<_>, _>>()?;
                 let func: TOverloadedFunc = env.get_overloaded_func(name)?;
-                let type_preconditions = func.lookup_type_preconditions(&args)?;
+                let type_preconditions = func.lookup_type_preconditions(args)?;
                 // println!("Begin precondtion check for function call {}", name);
                 for cond in type_preconditions {
                     let cond_z3_value = cond.z3_check(env)?;
