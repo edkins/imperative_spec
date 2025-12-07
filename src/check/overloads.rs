@@ -87,7 +87,7 @@ impl TOverloadedFunc {
                     compatible = false;
                     break;
                 }
-                type_preconditions.extend_from_slice(&param_type.type_assertions(arg.clone()));
+                type_preconditions.extend_from_slice(&param_type.type_assertions(arg.clone())?);
             }
             if compatible {
                 return Ok(type_preconditions);

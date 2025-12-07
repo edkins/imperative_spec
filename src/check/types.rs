@@ -1,4 +1,21 @@
+use std::array;
+
 use crate::{check::{ztype_ast::TExpr, ztype_inference::{TypeError, big_and}}, syntax::ast::{Arg, Bound, Literal, Type, TypeArg}};
+
+impl Bound {
+    pub fn as_expr(&self) -> Result<TExpr, TypeError> {
+        match self {
+            Bound::I64(i) => Ok(TExpr::Literal(Literal::I64(*i))),
+            Bound::U64(u) => Ok(TExpr::Literal(Literal::U64(*u))),
+            Bound::MinusInfinity => Err(TypeError {
+                message: "Cannot convert -infinity to expression".to_owned(),
+            }),
+            Bound::PlusInfinity => Err(TypeError {
+                message: "Cannot convert +infinity to expression".to_owned(),
+            }),
+        }
+    }
+}
 
 impl Type {
     // pub fn type_assertions_on_name(&self, more_general_type: &Type, name: &str) -> Vec<TExpr> {
@@ -10,14 +27,60 @@ impl Type {
     //     self.type_assertions(expr)
     // }
 
-    pub fn type_assertions(&self, expr: TExpr) -> Vec<TExpr> {
+    pub fn most_general_type(&self) -> Type {
+        if self.is_int() {
+            Type::basic("int")
+        } else {
+            self.clone()
+        }
+    }
+
+    pub fn type_assertions(&self, expr: TExpr) -> Result<Vec<TExpr>, TypeError> {
         match self.name.as_str() {
             "int" | "nat" | "z8" | "z16" | "z32" | "z64" | "i8" | "i16" | "i32" | "i64" | "u8"
             | "u16" | "u32" | "u64" => {
                 let (lower, upper) = lookup_int_bounds(&self.name);
-                bounds_to_expr(lower, upper, expr)
+                Ok(bounds_to_expr(lower, upper, expr))
             }
-            _ => vec![],
+            "Seq" | "Vec" => {
+                if let &[TypeArg::Type(elem_type)] = &self.type_args.as_slice() {
+                    if let Some(lambda) = elem_type.type_lambda(&elem_type.most_general_type())? {
+                        Ok(vec![expr.seq_all(&lambda)?])
+                    } else {
+                        Ok(vec![])
+                    }
+                } else {
+                    Err(TypeError {
+                        message: format!(
+                            "Type {} should have exactly one type argument",
+                            self.name
+                        ),
+                    })
+                }
+            }
+            "Array" => {
+                if let &[TypeArg::Type(elem_type), TypeArg::Bound(array_size)] =
+                    &self.type_args.as_slice()
+                {
+                    let size_expr = array_size.as_expr()?;
+                    let mut conds = vec![expr.seq_len()?.eq(&size_expr)?];
+                    if let Some(lambda) = elem_type.type_lambda(&elem_type.most_general_type())? {
+                        conds.push(expr.seq_all(&lambda)?);
+                    }
+                    Ok(conds)
+                } else {
+                    Err(TypeError {
+                        message: format!(
+                            "Type {} should have exactly two type arguments",
+                            self.name
+                        ),
+                    })
+                }
+            }
+            "str" | "bool" | "void" => Ok(vec![]),
+            _ => Err(TypeError {
+                message: format!("Unknown type for type assertions: {}", self),
+            }),
         }
     }
 
@@ -37,8 +100,19 @@ impl Type {
         self.name.as_str() == "EmptySeq" && self.type_args.is_empty()
     }
 
+    pub fn get_named_seq(&self) -> Option<&Type> {
+        if self.is_named_seq() {
+            match &self.type_args[0] {
+                TypeArg::Type(t) => Some(t),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn is_named_seq(&self) -> bool {
-        self.name.as_str() == "Seq" && self.type_args.len() == 1
+        matches!((self.name.as_str(), self.type_args.len()), ("Seq"|"Vec",1)|("Array", 2))
     }
 
     pub fn is_int(&self) -> bool {
@@ -108,31 +182,29 @@ impl Type {
         if self.is_named_seq() && other.is_empty_seq() {
             return true;
         }
-        if self.is_named_seq() && other.is_named_seq() {
-            let self_arg = self.one_type_arg().unwrap();
-            let other_arg = other.one_type_arg().unwrap();
-            return self_arg.compatible_with(&other_arg);
+        if let Some(self_elem) = self.get_named_seq() && let Some(other_elem) = other.get_named_seq() {
+            return self_elem.compatible_with(&other_elem);
         }
         false
     }
 
-    fn type_lambda(&self, more_general_type: &Type) -> Option<TExpr> {
-        assert!(self.is_subtype_of(more_general_type));
+    fn type_lambda(&self, more_general_type: &Type) -> Result<Option<TExpr>, TypeError> {
+        assert!(self.is_subtype_of(more_general_type), "Type {} is not a subtype of {}", self, more_general_type);
         let var = TExpr::Variable {
             name: "__item__".to_owned(),
             typ: more_general_type.clone(),
         };
-        let conds = self.type_assertions(var);
+        let conds = self.type_assertions(var)?;
         if conds.is_empty() {
-            return None;
+            return Ok(None);
         }
-        Some(TExpr::Lambda {
+        Ok(Some(TExpr::Lambda {
             args: vec![Arg {
                 name: "__item__".to_owned(),
                 arg_type: more_general_type.clone(),
             }],
             body: Box::new(big_and(&conds).unwrap()),
-        })
+        }))
     }
 }
 

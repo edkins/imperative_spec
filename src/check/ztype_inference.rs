@@ -347,21 +347,29 @@ impl TExpr {
     }
 
     pub fn seq_at(&self, index: &TExpr) -> Result<TExpr, TypeError> {
-        if self.typ().name != "Seq" {
+        if self.typ().is_empty_seq() {
+            return Err(TypeError {
+                message: "Cannot index into an empty sequence".to_owned(),
+            });
+        }
+        if let Some(elem_type) = self.typ().get_named_seq() {
+            Ok(TExpr::FunctionCall {
+                name: "seq_at".to_owned(),
+                args: vec![self.clone(), index.clone()],
+                return_type: elem_type.clone(),
+            })
+        } else {
             return Err(TypeError {
                 message: format!("seq_at called on non-sequence type {}", self.typ()),
             });
         }
-        let elem_type = self.typ().one_type_arg()?;
-        Ok(TExpr::FunctionCall {
-            name: "seq_at".to_owned(),
-            args: vec![self.clone(), index.clone()],
-            return_type: elem_type,
-        })
     }
 
     pub fn seq_len(&self) -> Result<TExpr, TypeError> {
-        if self.typ().name != "Seq" {
+        if self.typ().is_empty_seq() {
+            return Ok(TExpr::Literal(Literal::U64(0)));
+        }
+        if !self.typ().is_named_seq() {
             return Err(TypeError {
                 message: format!("seq_len called on non-sequence type {}", self.typ()),
             });
@@ -374,80 +382,90 @@ impl TExpr {
     }
 
     pub fn seq_map(&self, f: &TExpr) -> Result<TExpr, TypeError> {
-        if self.typ().name != "Seq" {
+        if self.typ().is_empty_seq() {
+            // TODO: add type information gleaned from f?
+            return Ok(self.clone());
+        }
+        if let Some(elem_type) = self.typ().get_named_seq() {
+            let ret_type = f.typ().call_lambda(from_ref(elem_type))?;
+            Ok(TExpr::FunctionCall {
+                name: "seq_map".to_owned(),
+                args: vec![self.clone(), f.clone()],
+                return_type: Type {
+                    name: "Seq".to_owned(),
+                    type_args: vec![TypeArg::Type(ret_type)],
+                },
+            })
+        } else {
             return Err(TypeError {
                 message: format!("seq_map called on non-sequence type {}", self.typ()),
             });
         }
-        let elem_type = self.typ().one_type_arg()?;
-        let ret_type = f.typ().call_lambda(&[elem_type])?;
-        Ok(TExpr::FunctionCall {
-            name: "seq_map".to_owned(),
-            args: vec![self.clone(), f.clone()],
-            return_type: Type {
-                name: "Seq".to_owned(),
-                type_args: vec![TypeArg::Type(ret_type)],
-            },
-        })
     }
 
     pub fn seq_foldl(&self, f: &TExpr, initial: &TExpr) -> Result<TExpr, TypeError> {
-        if self.typ().name != "Seq" {
+        if self.typ().is_empty_seq() {
+            return Ok(initial.clone());
+        }
+        if let Some(elem_type) = self.typ().get_named_seq() {
+            let return_type = f.typ().call_lambda(&[initial.typ(), elem_type.clone()])?;
+            if !initial.typ().is_subtype_of(&return_type) {
+                return Err(TypeError {
+                    message: format!(
+                        "Initial value type {} is not compatible with fold function return type {}",
+                        initial.typ(),
+                        return_type
+                    ),
+                });
+            }
+            if !f
+                .typ()
+                .call_lambda(&[return_type.clone(), elem_type.clone()])?
+                .is_subtype_of(&return_type)
+            {
+                return Err(TypeError {
+                    message: format!(
+                        "Fold function return type {} is not compatible with fold function argument type {}",
+                        return_type, elem_type
+                    ),
+                });
+            }
+            Ok(TExpr::FunctionCall {
+                name: "seq_foldl".to_owned(),
+                args: vec![self.clone(), f.clone(), initial.clone()],
+                return_type,
+            })
+        } else {
             return Err(TypeError {
                 message: format!("seq_foldl called on non-sequence type {}", self.typ()),
             });
         }
-        let elem_type = self.typ().one_type_arg()?;
-        let return_type = f.typ().call_lambda(&[initial.typ(), elem_type.clone()])?;
-        if !initial.typ().is_subtype_of(&return_type) {
-            return Err(TypeError {
-                message: format!(
-                    "Initial value type {} is not compatible with fold function return type {}",
-                    initial.typ(),
-                    return_type
-                ),
-            });
-        }
-        if !f
-            .typ()
-            .call_lambda(&[return_type.clone(), elem_type.clone()])?
-            .is_subtype_of(&return_type)
-        {
-            return Err(TypeError {
-                message: format!(
-                    "Fold function return type {} is not compatible with fold function argument type {}",
-                    return_type, elem_type
-                ),
-            });
-        }
-        Ok(TExpr::FunctionCall {
-            name: "seq_foldl".to_owned(),
-            args: vec![self.clone(), f.clone(), initial.clone()],
-            return_type,
-        })
     }
 
     pub fn seq_all(&self, predicate: &TExpr) -> Result<TExpr, TypeError> {
-        if self.typ().name != "Seq" {
+        if self.typ().is_empty_seq() {
+            return Ok(TExpr::Literal(Literal::Bool(true)));
+        }
+        if let Some(elem_type) = self.typ().get_named_seq() {
+            if !predicate
+                .typ()
+                .call_lambda(from_ref(&elem_type))?
+                .is_subtype_of(&Type::basic("bool"))
+            {
+                return Err(TypeError {
+                    message: format!(
+                        "Predicate function does not return bool for element type {}",
+                        elem_type
+                    ),
+                });
+            }
+            self.seq_map(predicate)?
+                .seq_foldl(&TEnv::and_lambda(), &TExpr::Literal(Literal::Bool(true)))
+        } else {
             return Err(TypeError {
                 message: format!("seq_all called on non-sequence type {}", self.typ()),
             });
         }
-        let elem_type = self.typ().one_type_arg()?;
-        if !predicate
-            .typ()
-            .call_lambda(from_ref(&elem_type))?
-            .is_subtype_of(&Type::basic("bool"))
-        {
-            return Err(TypeError {
-                message: format!(
-                    "Predicate function does not return bool for element type {}",
-                    elem_type
-                ),
-            });
-        }
-        self.seq_map(predicate)?
-            .seq_foldl(&TEnv::and_lambda(), &TExpr::Literal(Literal::Bool(true)))
     }
 }
 
