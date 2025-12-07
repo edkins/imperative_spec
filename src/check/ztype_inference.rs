@@ -3,7 +3,7 @@ use std::slice::from_ref;
 
 use crate::check::builtins::builtins;
 use crate::check::overloads::TOverloadedFunc;
-use crate::check::ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt};
+use crate::check::ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt};
 use crate::syntax::ast::{Arg, AssignOp, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg};
 
 #[derive(Debug)]
@@ -458,6 +458,28 @@ impl Stmt {
     }
 }
 
+impl TFuncAttribute {
+    fn from_expr(expr: &Expr) -> Result<TFuncAttribute, TypeError> {
+        match expr {
+            Expr::FunctionCall { name, args } if name == "check_decisions" => {
+                let args = args
+                    .iter()
+                    .map(|arg| match arg {
+                        Expr::Variable(x) => Ok(x.clone()),
+                        _ => Err(TypeError {
+                            message: "check_decisions arguments must be u64 literals".to_owned(),
+                        }),
+                    })
+                    .collect::<Result<Vec<String>, TypeError>>()?;
+                Ok(TFuncAttribute::CheckDecisions(args))
+            }
+            _ => Err(TypeError {
+                message: format!("Unknown function attribute: {}", expr),
+            }),
+        }
+    }
+}
+
 impl FuncDef {
     fn decl(&self) -> Result<TOverloadedFunc, TypeError> {
         let mut arg_types = vec![];
@@ -532,7 +554,15 @@ impl FuncDef {
                 arg_type: t.clone(),
             })
             .collect::<Vec<_>>();
+
+        let attributes = self
+            .attributes
+            .iter()
+            .map(|attr| TFuncAttribute::from_expr(attr))
+            .collect::<Result<Vec<TFuncAttribute>, TypeError>>()?;
+
         Ok(TFuncDef {
+            attributes,
             name: self.name.clone(),
             args,
             return_type: decl.return_type.clone(),

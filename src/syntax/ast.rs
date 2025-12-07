@@ -18,6 +18,7 @@ pub struct Arg {
 
 #[derive(Clone)]
 pub struct FuncDef {
+    pub attributes: Vec<Expr>,
     pub name: String,
     pub args: Vec<Arg>,
     pub return_name: Option<String>,

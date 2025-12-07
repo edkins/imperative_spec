@@ -49,6 +49,7 @@ enum Symbol {
     Exclaim,
     LogicalAnd,
     LogicalOr,
+    Hash,
 }
 
 fn pure_whitespace1(input: &str) -> IResult<&str, &str> {
@@ -188,7 +189,7 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
 }
 
 fn is_multi_char_sym(ch: char) -> bool {
-    matches!(ch, ':' | '=' | '+' | '-' | '<' | '>' | '!' | '&' | '|')
+    matches!(ch, ':' | '=' | '+' | '-' | '<' | '>' | '!' | '&' | '|' | '#')
 }
 
 fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
@@ -210,6 +211,7 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "!" => Ok((input, Symbol::Exclaim)),
         "&&" => Ok((input, Symbol::LogicalAnd)),
         "||" => Ok((input, Symbol::LogicalOr)),
+        "#" => Ok((input, Symbol::Hash)),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Char,
@@ -589,7 +591,19 @@ fn expr_or_empty(input: &str) -> IResult<&str, Expr> {
     }
 }
 
+fn attribute(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = symbol(Symbol::Hash)(input)?;
+    let (input, expr) = delimited(
+        symbol(Symbol::OpenSquare),
+        expr_comma,
+        symbol(Symbol::CloseSquare),
+    )
+    .parse(input)?;
+    Ok((input, expr))
+}
+
 fn funcdef(input: &str) -> IResult<&str, FuncDef> {
+    let (input, attributes) = many0(attribute).parse(input)?;
     let (input, _) = keyword(Word::Fn)(input)?;
     let (input, name) = identifier(input)?;
     let (input, args) = delimited(
@@ -636,6 +650,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
     Ok((
         input,
         FuncDef {
+            attributes,
             name,
             args,
             return_name,

@@ -1,0 +1,10 @@
+#[check_decisions(z32_add)]
+fn my_add(x: u32, y: u32) -> u32
+    requires x < 10, y < 10
+{
+    x + y
+}
+
+fn main() {
+    my_add(2,3);
+}

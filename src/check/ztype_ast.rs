@@ -75,7 +75,12 @@ impl TExpr {
     }
 }
 
+pub enum TFuncAttribute {
+    CheckDecisions(Vec<String>),
+}
+
 pub struct TFuncDef {
+    pub attributes: Vec<TFuncAttribute>,
     pub name: String,
     pub args: Vec<Arg>,
     pub return_name: String,

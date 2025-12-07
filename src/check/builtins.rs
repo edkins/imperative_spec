@@ -1,7 +1,7 @@
 use std::{collections::HashMap, slice::from_ref};
 
 use crate::check::{
-    overloads::{TFunc, TOptimizedFunc, TOverloadedFunc},
+    overloads::{TFunc, TOverloadedFunc},
     parameterized::{ParameterizedType, ParameterizedTypeArg},
 };
 
@@ -26,13 +26,13 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     let print_sig = TOverloadedFunc::psimple(from_ref(&tstr), &tvoid);
     let assert_sig = TOverloadedFunc::psimple(from_ref(&tbool), &tvoid);
     let bool_op = TOverloadedFunc::psimple(&[tbool.clone(), tbool.clone()], &tbool);
-    let eq_sig = TOverloadedFunc(vec![TOptimizedFunc {
+    let eq_sig = TOverloadedFunc {
         headline: TFunc {
             arg_types: vec![tparam.clone(), tparam.clone()],
             return_type: tbool.clone(),
         },
         optimizations: vec![],
-    }]);
+    };
 
     functions.insert("==".to_owned(), eq_sig.clone());
     functions.insert("!=".to_owned(), eq_sig.clone());

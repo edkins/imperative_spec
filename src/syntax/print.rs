@@ -150,6 +150,9 @@ impl Display for Expr {
 
 impl Display for FuncDef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for attrib in &self.attributes {
+            writeln!(f, "#[{}]", attrib)?;
+        }
         write!(f, "fn {}(", self.name)?;
         for (i, arg) in self.args.iter().enumerate() {
             write!(f, "{}: {}", arg.name, arg.arg_type)?;
@@ -236,6 +239,7 @@ mod test {
     #[test]
     fn funcdef() {
         let func = FuncDef {
+            attributes: vec![],
             name: "add".to_string(),
             args: vec![
                 Arg {
@@ -292,6 +296,7 @@ mod test {
     #[test]
     fn func_with_semicolon_arg() {
         let func = FuncDef {
+            attributes: vec![],
             name: "example".to_string(),
             args: vec![Arg {
                 name: "x".to_owned(),
