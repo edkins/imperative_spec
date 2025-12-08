@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::slice::from_ref;
 
 use crate::check::builtins::builtins;
 use crate::check::overloads::TOverloadedFunc;
 use crate::check::ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt};
-use crate::syntax::ast::{Arg, AssignOp, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg};
+use crate::syntax::ast::{Arg, AssignOp, Expr, FuncDef, SourceFile, Stmt, Type, TypeArg};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -111,176 +110,6 @@ impl Type {
     // }
 }
 
-pub fn big_and(exprs: &[TExpr]) -> Result<TExpr, TypeError> {
-    if exprs.is_empty() {
-        return Ok(TExpr::Literal(Literal::Bool(true)));
-    }
-    let mut result = exprs[0].clone();
-    for e in &exprs[1..] {
-        result = result.and(e)?;
-    }
-    Ok(result)
-}
-
-impl TExpr {
-    pub fn eq(&self, other: &TExpr) -> Result<TExpr, TypeError> {
-        if !self.typ().compatible_with(&other.typ()) {
-            return Err(TypeError {
-                message: format!(
-                    "Cannot compare equality of incompatible types {} and {}",
-                    self.typ(),
-                    other.typ()
-                ),
-            });
-        }
-        Ok(TExpr::FunctionCall {
-            name: "==".to_owned(),
-            args: vec![self.clone(), other.clone()],
-            return_type: Type::basic("bool"),
-        })
-    }
-
-    pub fn and(&self, other: &TExpr) -> Result<TExpr, TypeError> {
-        if !self.typ().is_bool() || !other.typ().is_bool() {
-            return Err(TypeError {
-                message: format!(
-                    "Cannot perform logical and on non-bool types {} and {}",
-                    self.typ(),
-                    other.typ()
-                ),
-            });
-        }
-        Ok(TExpr::FunctionCall {
-            name: "&&".to_owned(),
-            args: vec![self.clone(), other.clone()],
-            return_type: Type::basic("bool"),
-        })
-    }
-
-    #[allow(dead_code)]
-    pub fn seq_at(&self, index: &TExpr) -> Result<TExpr, TypeError> {
-        if self.typ().is_empty_seq() {
-            return Err(TypeError {
-                message: "Cannot index into an empty sequence".to_owned(),
-            });
-        }
-        if let Some(elem_type) = self.typ().get_named_seq() {
-            Ok(TExpr::FunctionCall {
-                name: "seq_at".to_owned(),
-                args: vec![self.clone(), index.clone()],
-                return_type: elem_type.clone(),
-            })
-        } else {
-            Err(TypeError {
-                message: format!("seq_at called on non-sequence type {}", self.typ()),
-            })
-        }
-    }
-
-    pub fn seq_len(&self) -> Result<TExpr, TypeError> {
-        if self.typ().is_empty_seq() {
-            return Ok(TExpr::Literal(Literal::U64(0)));
-        }
-        if !self.typ().is_named_seq() {
-            return Err(TypeError {
-                message: format!("seq_len called on non-sequence type {}", self.typ()),
-            });
-        }
-        Ok(TExpr::FunctionCall {
-            name: "seq_len".to_owned(),
-            args: vec![self.clone()],
-            return_type: Type::basic("int"),
-        })
-    }
-
-    pub fn seq_map(&self, f: &TExpr) -> Result<TExpr, TypeError> {
-        if self.typ().is_empty_seq() {
-            // TODO: add type information gleaned from f?
-            return Ok(self.clone());
-        }
-        if let Some(elem_type) = self.typ().get_named_seq() {
-            let ret_type = f.typ().call_lambda(from_ref(elem_type))?;
-            Ok(TExpr::FunctionCall {
-                name: "seq_map".to_owned(),
-                args: vec![self.clone(), f.clone()],
-                return_type: Type {
-                    name: "Seq".to_owned(),
-                    type_args: vec![TypeArg::Type(ret_type)],
-                },
-            })
-        } else {
-            Err(TypeError {
-                message: format!("seq_map called on non-sequence type {}", self.typ()),
-            })
-        }
-    }
-
-    pub fn seq_foldl(&self, f: &TExpr, initial: &TExpr) -> Result<TExpr, TypeError> {
-        if self.typ().is_empty_seq() {
-            return Ok(initial.clone());
-        }
-        if let Some(elem_type) = self.typ().get_named_seq() {
-            let return_type = f.typ().call_lambda(&[initial.typ(), elem_type.clone()])?;
-            if !initial.typ().is_subtype_of(&return_type) {
-                return Err(TypeError {
-                    message: format!(
-                        "Initial value type {} is not compatible with fold function return type {}",
-                        initial.typ(),
-                        return_type
-                    ),
-                });
-            }
-            if !f
-                .typ()
-                .call_lambda(&[return_type.clone(), elem_type.clone()])?
-                .is_subtype_of(&return_type)
-            {
-                return Err(TypeError {
-                    message: format!(
-                        "Fold function return type {} is not compatible with fold function argument type {}",
-                        return_type, elem_type
-                    ),
-                });
-            }
-            Ok(TExpr::FunctionCall {
-                name: "seq_foldl".to_owned(),
-                args: vec![self.clone(), f.clone(), initial.clone()],
-                return_type,
-            })
-        } else {
-            Err(TypeError {
-                message: format!("seq_foldl called on non-sequence type {}", self.typ()),
-            })
-        }
-    }
-
-    pub fn seq_all(&self, predicate: &TExpr) -> Result<TExpr, TypeError> {
-        if self.typ().is_empty_seq() {
-            return Ok(TExpr::Literal(Literal::Bool(true)));
-        }
-        if let Some(elem_type) = self.typ().get_named_seq() {
-            if !predicate
-                .typ()
-                .call_lambda(from_ref(elem_type))?
-                .is_subtype_of(&Type::basic("bool"))
-            {
-                return Err(TypeError {
-                    message: format!(
-                        "Predicate function does not return bool for element type {}",
-                        elem_type
-                    ),
-                });
-            }
-            self.seq_map(predicate)?
-                .seq_foldl(&TEnv::and_lambda(), &TExpr::Literal(Literal::Bool(true)))
-        } else {
-            Err(TypeError {
-                message: format!("seq_all called on non-sequence type {}", self.typ()),
-            })
-        }
-    }
-}
-
 impl Expr {
     fn type_check(&self, env: &mut TEnv) -> Result<TExpr, TypeError> {
         match self {
@@ -309,12 +138,15 @@ impl Expr {
                     .iter()
                     .map(|a| a.type_check(env))
                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
-                let ret_type = overloaded
-                    .lookup_return_type(&targs.iter().map(|a| a.typ()).collect::<Vec<Type>>())?;
+                let concrete_overloaded = overloaded.instantiate_from_types(
+                    &targs.iter().map(|a| a.typ()).collect::<Vec<Type>>(),
+                )?;
+
                 Ok(TExpr::FunctionCall {
                     name: name.to_owned(),
                     args: targs,
-                    return_type: ret_type,
+                    return_type: concrete_overloaded.headline.return_type.clone(),
+                    optimizations: concrete_overloaded.optimizations.clone(),
                 })
             }
             Expr::Semicolon(stmt, expr) => {
@@ -355,11 +187,7 @@ impl AssignOp {
             AssignOp::Assign => Ok(right.clone()),
             AssignOp::PlusAssign => {
                 if left.typ().is_int() && right.typ().is_int() {
-                    Ok(TExpr::FunctionCall {
-                        name: "+".to_owned(),
-                        args: vec![left.clone(), right.clone()],
-                        return_type: Type::basic("int"),
-                    })
+                    left.add(right)
                 } else {
                     Err(TypeError {
                         message: format!(
@@ -372,11 +200,7 @@ impl AssignOp {
             }
             AssignOp::MinusAssign => {
                 if left.typ().is_int() && right.typ().is_int() {
-                    Ok(TExpr::FunctionCall {
-                        name: "-".to_owned(),
-                        args: vec![left.clone(), right.clone()],
-                        return_type: Type::basic("int"),
-                    })
+                    left.sub(right)
                 } else {
                     Err(TypeError {
                         message: format!(
@@ -451,6 +275,7 @@ impl Stmt {
                 }
                 Ok(TStmt::Assign {
                     name: name.clone(),
+                    typ: var_type.clone(),
                     value: result,
                 })
             }
@@ -578,45 +403,12 @@ impl FuncDef {
     }
 }
 
-impl TEnv {
-    fn and_lambda() -> TExpr {
-        let var0 = "__item0__".to_owned();
-        let var1 = "__item1__".to_owned();
-        let v0 = TExpr::Variable {
-            name: var0.clone(),
-            typ: Type::basic("bool"),
-        };
-        let v1 = TExpr::Variable {
-            name: var1.clone(),
-            typ: Type::basic("bool"),
-        };
-        let body = v0.and(&v1).unwrap();
-
-        TExpr::Lambda {
-            args: vec![
-                Arg {
-                    name: var0.clone(),
-                    arg_type: Type::basic("bool"),
-                },
-                Arg {
-                    name: var1.clone(),
-                    arg_type: Type::basic("bool"),
-                },
-            ],
-            body: Box::new(body),
-        }
-    }
-}
-
 impl SourceFile {
     pub fn type_check(&self) -> Result<TSourceFile, TypeError> {
         let mut env = TEnv {
             variables: HashMap::new(),
             functions: builtins(),
         };
-
-        // env.functions.insert("seq_at".to_owned(), TOverloadedFunc::Finite(vec![]));
-        // env.functions.insert("seq_len".to_owned(), TOverloadedFunc::Finite(vec![]));
 
         for func in &self.functions {
             let overload = func.decl()?;

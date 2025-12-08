@@ -1,8 +1,5 @@
 use crate::{
-    check::{
-        ztype_ast::TExpr,
-        ztype_inference::{TypeError, big_and},
-    },
+    check::{ops::big_and, ztype_ast::TExpr, ztype_inference::TypeError},
     syntax::ast::{Arg, Bound, Literal, Type, TypeArg},
 };
 
@@ -293,30 +290,14 @@ fn bounds_to_expr(lower: Bound, upper: Bound, expr: TExpr) -> Vec<TExpr> {
     let mut result = vec![];
     match lower {
         Bound::MinusInfinity => {}
-        Bound::I64(i) => result.push(TExpr::FunctionCall {
-            name: ">=".to_owned(),
-            args: vec![expr.clone(), TExpr::Literal(Literal::I64(i))],
-            return_type: Type::basic("bool"),
-        }),
-        Bound::U64(u) => result.push(TExpr::FunctionCall {
-            name: ">=".to_owned(),
-            args: vec![expr.clone(), TExpr::Literal(Literal::U64(u))],
-            return_type: Type::basic("bool"),
-        }),
+        Bound::I64(i) => result.push(expr.ge(&TExpr::Literal(Literal::I64(i))).unwrap()),
+        Bound::U64(u) => result.push(expr.ge(&TExpr::Literal(Literal::U64(u))).unwrap()),
         Bound::PlusInfinity => unreachable!(),
     }
     match upper {
         Bound::PlusInfinity => {}
-        Bound::I64(i) => result.push(TExpr::FunctionCall {
-            name: "<=".to_owned(),
-            args: vec![expr.clone(), TExpr::Literal(Literal::I64(i))],
-            return_type: Type::basic("bool"),
-        }),
-        Bound::U64(u) => result.push(TExpr::FunctionCall {
-            name: "<=".to_owned(),
-            args: vec![expr.clone(), TExpr::Literal(Literal::U64(u))],
-            return_type: Type::basic("bool"),
-        }),
+        Bound::I64(i) => result.push(expr.le(&TExpr::Literal(Literal::I64(i))).unwrap()),
+        Bound::U64(u) => result.push(expr.le(&TExpr::Literal(Literal::U64(u))).unwrap()),
         Bound::MinusInfinity => unreachable!(),
     }
     result

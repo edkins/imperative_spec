@@ -1,8 +1,20 @@
-use crate::syntax::ast::{Arg, Literal, Type, TypeArg};
+use crate::{
+    check::overloads::ConcreteOptimization,
+    syntax::ast::{Arg, Literal, Type, TypeArg},
+};
+
+// #[derive(Clone)]
+// pub enum SizedLiteral {
+//     U32(u32),
+//     U64(u64),
+//     I32(i32),
+//     I64(i64),
+// }
 
 #[derive(Clone)]
 pub enum TExpr {
     Literal(Literal),
+    // SizedLiteral(SizedLiteral),
     Variable {
         name: String,
         typ: Type,
@@ -12,6 +24,7 @@ pub enum TExpr {
         name: String,
         args: Vec<TExpr>,
         return_type: Type,
+        optimizations: Vec<ConcreteOptimization>,
     },
     Sequence {
         elements: Vec<TExpr>,
@@ -36,6 +49,7 @@ pub enum TStmt {
     },
     Assign {
         name: String,
+        typ: Type,
         value: TExpr,
     },
 }
@@ -75,10 +89,12 @@ impl TExpr {
     }
 }
 
+#[derive(Clone)]
 pub enum TFuncAttribute {
     CheckDecisions(Vec<String>),
 }
 
+#[derive(Clone)]
 pub struct TFuncDef {
     pub attributes: Vec<TFuncAttribute>,
     pub name: String,
@@ -101,7 +117,12 @@ impl std::fmt::Display for TExpr {
             TExpr::Literal(lit) => write!(f, "{}", lit),
             TExpr::Variable { name, typ } => write!(f, "{}:{}", name, typ),
             TExpr::Semicolon(stmt, expr) => write!(f, "{};\n{}", stmt, expr),
-            TExpr::FunctionCall { name, args, .. } => {
+            TExpr::FunctionCall {
+                name,
+                args,
+                return_type,
+                optimizations,
+            } => {
                 write!(f, "{}(", name)?;
                 for (i, arg) in args.iter().enumerate() {
                     write!(f, "{}", arg)?;
@@ -109,7 +130,18 @@ impl std::fmt::Display for TExpr {
                         write!(f, ", ")?;
                     }
                 }
-                write!(f, ")")
+                write!(f, "):{}", return_type)?;
+                if !optimizations.is_empty() {
+                    write!(f, " {{ ")?;
+                    for (i, opt) in optimizations.iter().enumerate() {
+                        write!(f, "{}", opt.debug_name)?;
+                        if i != optimizations.len() - 1 {
+                            write!(f, ", ")?;
+                        }
+                    }
+                    write!(f, " }}")?;
+                }
+                Ok(())
             }
             TExpr::Sequence { elements, .. } => {
                 write!(f, "[")?;

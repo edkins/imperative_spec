@@ -12,10 +12,7 @@ fn insert_multiple(
 ) {
     for &name in names {
         if map.contains_key(name) {
-            panic!(
-                "Builtin function {} defined multiple times",
-                name
-            );
+            panic!("Builtin function {} defined multiple times", name);
         } else {
             map.insert(name.to_owned(), func.clone());
         }
@@ -41,9 +38,17 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
         vec![ParameterizedTypeArg::Type(uparam.clone())],
     );
 
-    insert_multiple(&mut functions, &["==", "!="], TOverloadedFunc::psimple(&[tparam.clone(), tparam.clone()], &tbool));
+    insert_multiple(
+        &mut functions,
+        &["==", "!="],
+        TOverloadedFunc::psimple(&[tparam.clone(), tparam.clone()], &tbool),
+    );
 
-    insert_multiple(&mut functions, &["<","<=",">",">="], TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tbool));
+    insert_multiple(
+        &mut functions,
+        &["<", "<=", ">", ">="],
+        TOverloadedFunc::psimple(&[tint.clone(), tint.clone()], &tbool),
+    );
 
     for &(symbol, name) in &[("+", "add"), ("-", "sub"), ("*", "mul")] {
         functions.insert(
@@ -56,21 +61,37 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
                 optimizations: vec![
                     Optimization {
                         debug_name: format!("z32_{}", name),
-                        func: TFunc { arg_types: vec![z32.clone(), z32.clone()], return_type: z32.clone() }
+                        func: TFunc {
+                            arg_types: vec![z32.clone(), z32.clone()],
+                            return_type: z32.clone(),
+                        },
                     },
                     Optimization {
                         debug_name: format!("z64_{}", name),
-                        func: TFunc { arg_types: vec![z64.clone(), z64.clone()], return_type: z64.clone() }
-                    }
+                        func: TFunc {
+                            arg_types: vec![z64.clone(), z64.clone()],
+                            return_type: z64.clone(),
+                        },
+                    },
                 ],
             },
         );
     }
 
-    insert_multiple(&mut functions, &["&&","||"], TOverloadedFunc::psimple(&[tbool.clone(), tbool.clone()], &tbool));
+    insert_multiple(
+        &mut functions,
+        &["&&", "||"],
+        TOverloadedFunc::psimple(&[tbool.clone(), tbool.clone()], &tbool),
+    );
 
-    functions.insert("println".to_owned(), TOverloadedFunc::psimple(from_ref(&tstr), &tvoid));
-    functions.insert("assert".to_owned(), TOverloadedFunc::psimple(from_ref(&tbool), &tvoid));
+    functions.insert(
+        "println".to_owned(),
+        TOverloadedFunc::psimple(from_ref(&tstr), &tvoid),
+    );
+    functions.insert(
+        "assert".to_owned(),
+        TOverloadedFunc::psimple(from_ref(&tbool), &tvoid),
+    );
     functions.insert(
         "seq_len".to_owned(),
         TOverloadedFunc::psimple(from_ref(&seqt), &tint),

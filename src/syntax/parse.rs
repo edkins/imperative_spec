@@ -190,7 +190,10 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
 }
 
 fn is_multi_char_sym(ch: char) -> bool {
-    matches!(ch, ':' | '=' | '+' | '-' | '*' | '<' | '>' | '!' | '&' | '|' | '#')
+    matches!(
+        ch,
+        ':' | '=' | '+' | '-' | '*' | '<' | '>' | '!' | '&' | '|' | '#'
+    )
 }
 
 fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
