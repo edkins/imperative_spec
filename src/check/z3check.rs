@@ -57,17 +57,17 @@ impl From<OptimizationError> for CheckError {
     }
 }
 
-#[derive(Clone)]
-struct CheckedFunction {
-    name: String,
-    args: Vec<Arg>,
-    return_type: Type,
-    return_value: String,
-    side_effects: HashSet<String>,
-    preconditions: Vec<TExpr>,
-    postconditions: Vec<TExpr>,
-    body: Option<TExpr>,
-}
+// #[derive(Clone)]
+// struct CheckedFunction {
+//     name: String,
+//     args: Vec<Arg>,
+//     return_type: Type,
+//     return_value: String,
+//     side_effects: HashSet<String>,
+//     preconditions: Vec<TExpr>,
+//     postconditions: Vec<TExpr>,
+//     body: Option<TExpr>,
+// }
 
 #[derive(Clone)]
 struct CheckedVar {
@@ -85,12 +85,13 @@ struct Env {
     assumptions: Vec<z3::ast::Bool>,
     side_effects: HashSet<String>,
     builtins: HashMap<String, TOverloadedFunc>,
-    other_funcs: Vec<CheckedFunction>,
+    other_funcs: Vec<TFuncDef>,
     verbosity: u8,
     type_param_list: Vec<String>,
+    sees: Vec<String>,
 }
 
-impl CheckedFunction {
+impl TFuncDef {
     fn z3_func_decl(&self) -> Result<z3::FuncDecl, CheckError> {
         let args = self
             .args
@@ -100,24 +101,6 @@ impl CheckedFunction {
         let arg_refs = args.iter().collect::<Vec<&z3::Sort>>();
         let ret_sort = self.return_type.to_z3_sort()?;
         Ok(z3::FuncDecl::new(self.name.clone(), &arg_refs, &ret_sort))
-    }
-
-    fn with_visibility(&self, sees: &[String]) -> CheckedFunction {
-        let body = if sees.contains(&self.name) {
-            self.body.clone()
-        } else {
-            None
-        };
-        CheckedFunction {
-            name: self.name.clone(),
-            args: self.args.clone(),
-            return_type: self.return_type.clone(),
-            return_value: self.return_value.clone(),
-            side_effects: self.side_effects.clone(),
-            preconditions: self.preconditions.clone(),
-            postconditions: self.postconditions.clone(),
-            body,
-        }
     }
 }
 
@@ -215,20 +198,16 @@ impl Type {
 }
 
 impl Env {
-    fn new(other_funcs: &[CheckedFunction], sees: &[String], verbosity: u8) -> Self {
-        let mut other_funcs_visible = Vec::new();
-        for func in other_funcs {
-            // Hide the body of functions not in 'sees'
-            other_funcs_visible.push(func.with_visibility(sees));
-        }
+    fn new(other_funcs: &[TFuncDef], sees: &[String], verbosity: u8) -> Self {
         Env {
             vars: HashMap::new(),
             assumptions: Vec::new(),
             side_effects: HashSet::new(),
             builtins: builtins::builtins(),
-            other_funcs: other_funcs_visible,
+            other_funcs: other_funcs.to_owned(),
             verbosity,
             type_param_list: Vec::new(),
+            sees: sees.to_owned(),
         }
     }
 
@@ -422,7 +401,7 @@ impl Env {
 
     fn enter_call_scope(
         &self,
-        func: &CheckedFunction,
+        func: &TFuncDef,
         args: &[Dynamic],
     ) -> Result<Env, CheckError> {
         let mut new_env = self.clone();
@@ -601,14 +580,14 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
                     .collect::<Vec<&dyn z3::ast::Ast>>();
 
                 let retvar =
-                    call_env.insert_var(&user_func.return_value, false, &user_func.return_type)?;
+                    call_env.insert_var(&user_func.return_name, false, &user_func.return_type)?;
 
                 // we can assume the postconditions (which includes type info e.g. bounds on the return value)
                 call_env.assume_exprs(&user_func.postconditions)?;
                 // assume any conditions on the return type
                 call_env.assume_exprs(&user_func.return_type.type_assertions(
                     TExpr::Variable {
-                        name: user_func.return_value.clone(),
+                        name: user_func.return_name.clone(),
                         typ: user_func.return_type.clone(),
                     },
                     &call_env.type_param_list,
@@ -618,9 +597,9 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
                     call_env.side_effects.insert(effect.clone());
                 }
 
-                // If body is visible, check it (which will add relevant assumptions)
-                if let Some(body) = &user_func.body {
-                    let body_z3_value = body.z3_check(&mut call_env)?.0;
+                // If function is visible, check it (which will add relevant assumptions)
+                if env.sees.contains(&user_func.name) {
+                    let body_z3_value = user_func.body.z3_check(&mut call_env)?.0;
                     call_env.assume(retvar.safe_eq(&body_z3_value)?);
                 }
 
@@ -826,9 +805,9 @@ fn mk_z3_sequence(elems: Vec<Dynamic>, elem_type: &Type) -> Result<Dynamic, Chec
 
 fn z3_check_funcdef(
     func: &TFuncDef,
-    other_funcs: &[CheckedFunction],
+    other_funcs: &[TFuncDef],
     verbosity: u8,
-) -> Result<CheckedFunction, CheckError> {
+) -> Result<TFuncDef, CheckError> {
     if verbosity >= 2 {
         println!("\n\n\nChecking function: {}. New env.", func.name);
     }
@@ -872,15 +851,17 @@ fn z3_check_funcdef(
 
     print!("Checked function: {}", func.name);
     env.print_side_effects();
-    Ok(CheckedFunction {
+    Ok(TFuncDef {
+        attributes: func.attributes.clone(),
         name: func.name.clone(),
         args: func.args.clone(),
         return_type: func.return_type.clone(),
-        return_value: func.return_name.clone(),
+        return_name: func.return_name.clone(),
         side_effects: env.side_effects,
         preconditions: func.preconditions.clone(),
         postconditions: func.postconditions.clone(),
-        body: Some(new_body),
+        sees: func.sees.clone(),
+        body: new_body,
     })
 }
 
@@ -896,13 +877,13 @@ pub fn z3_check(source_file: &SourceFile, verbosity: u8) -> Result<(), CheckErro
         let checked_func = z3_check_funcdef(func, &other_funcs, verbosity)?;
         other_funcs.push(checked_func.clone());
         if verbosity >= 2 {
-            println!("Checked func body: {}", checked_func.body.as_ref().unwrap());
+            println!("Checked func body: {}", checked_func.body);
         }
     }
 
-    // let tsource_file = TSourceFile {
-    //     functions: other_funcs,
-    // };
+    let tsource_file = TSourceFile {
+        functions: other_funcs,
+    };
 
     if verbosity >= 1 {
         println!("Z3 checking passed.");

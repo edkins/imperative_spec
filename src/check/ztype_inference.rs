@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::check::builtins::builtins;
 use crate::check::overloads::TOverloadedFunc;
@@ -400,6 +400,7 @@ impl FuncDef {
             preconditions,
             postconditions,
             sees,
+            side_effects: HashSet::new(),
             body: tbody,
         })
     }

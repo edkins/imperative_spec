@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::{
     check::overloads::Optimization,
     syntax::ast::{Arg, Literal, Type, TypeArg},
@@ -103,6 +105,7 @@ pub struct TFuncDef {
     pub return_type: Type,
     pub preconditions: Vec<TExpr>,
     pub postconditions: Vec<TExpr>,
+    pub side_effects: HashSet<String>,
     pub sees: Vec<String>,
     pub body: TExpr,
 }

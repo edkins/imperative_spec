@@ -309,6 +309,7 @@ impl TFuncDef {
             postconditions: self.postconditions.clone(),
             sees: self.sees.clone(),
             body,
+            side_effects: self.side_effects.clone(),
         })
     }
 }
