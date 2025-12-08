@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::check::builtins::builtins;
-use crate::check::overloads::TOverloadedFunc;
 use crate::check::ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt};
 use crate::syntax::ast::{Arg, AssignOp, Expr, FuncDef, SourceFile, Stmt, Type, TypeArg};
 
@@ -20,7 +19,7 @@ impl std::error::Error for TypeError {}
 #[derive(Clone)]
 struct TEnv {
     variables: HashMap<String, Type>,
-    functions: HashMap<String, TOverloadedFunc>,
+    functions: HashMap<String, TFuncDef>,
 }
 
 impl Type {
@@ -145,7 +144,7 @@ impl Expr {
                 Ok(TExpr::FunctionCall {
                     name: name.to_owned(),
                     args: targs,
-                    return_type: concrete_overloaded.headline.return_type.clone(),
+                    return_type: concrete_overloaded.return_type.clone(),
                     optimizations: concrete_overloaded.optimizations.clone(),
                 })
             }
@@ -306,13 +305,13 @@ impl TFuncAttribute {
 }
 
 impl FuncDef {
-    fn decl(&self) -> Result<TOverloadedFunc, TypeError> {
+    fn decl(&self) -> Result<TFuncDef, TypeError> {
         let mut arg_types = vec![];
         for a in &self.args {
             arg_types.push(a.arg_type.clone());
         }
         let return_type = self.return_type.clone();
-        Ok(TOverloadedFunc::simple(&arg_types, &return_type))
+        Ok(TFuncDef::simple(&self.name, &arg_types, &return_type))
     }
 
     fn type_check(&self, env: &mut TEnv) -> Result<TFuncDef, TypeError> {
@@ -325,8 +324,7 @@ impl FuncDef {
                     "Function {} not found in environment during type checking",
                     self.name
                 ),
-            })?
-            .extract_single()?;
+            })?;
         assert!(decl.args.len() == self.args.len());
         for (a, a2) in self.args.iter().zip(&decl.args) {
             if local_env.variables.contains_key(&a.name) {
@@ -401,7 +399,9 @@ impl FuncDef {
             postconditions,
             sees,
             side_effects: HashSet::new(),
-            body: tbody,
+            body: Some(tbody),
+            optimizations: vec![],
+            type_params: vec![],
         })
     }
 }

@@ -1,23 +1,25 @@
-use std::{collections::HashMap, slice::from_ref};
+use std::{collections::{HashMap, HashSet}, slice::from_ref};
 
 use crate::{
     check::{
-        overloads::{Optimization, TFunc, TOverloadedFunc},
-        ztype_ast::TExpr,
+        overloads::Optimization,
+        ztype_ast::{TExpr, TFuncDef},
     },
     syntax::ast::{Arg, Type, TypeArg},
 };
 
 fn insert_multiple(
-    map: &mut HashMap<String, TOverloadedFunc>,
+    map: &mut HashMap<String, TFuncDef>,
     names: &[&str],
-    func: TOverloadedFunc,
+    func: TFuncDef,
 ) {
     for &name in names {
         if map.contains_key(name) {
             panic!("Builtin function {} defined multiple times", name);
         } else {
-            map.insert(name.to_owned(), func.clone());
+            let mut named_func = func.clone();
+            named_func.name = name.to_owned();
+            map.insert(name.to_owned(), named_func);
         }
     }
 }
@@ -42,7 +44,7 @@ fn args1(t0: &Type) -> Vec<Arg> {
     }]
 }
 
-pub fn builtins() -> HashMap<String, TOverloadedFunc> {
+pub fn builtins() -> HashMap<String, TFuncDef> {
     let mut functions = HashMap::new();
     let tu32 = Type::basic("u32");
     let tu64 = Type::basic("u64");
@@ -68,23 +70,23 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     insert_multiple(
         &mut functions,
         &["==", "!="],
-        TOverloadedFunc::psimple(&[tparam.clone(), tparam.clone()], &tbool, &["T"]),
+        TFuncDef::psimple("", &[tparam.clone(), tparam.clone()], &tbool, &["T"]),
     );
 
     insert_multiple(
         &mut functions,
         &["<", "<=", ">", ">="],
-        TOverloadedFunc::simple(&[tint.clone(), tint.clone()], &tbool),
+        TFuncDef::simple("", &[tint.clone(), tint.clone()], &tbool),
     );
 
     functions.insert(
         "neg".to_owned(),
-        TOverloadedFunc {
-            headline: TFunc {
-                args: args1(&tint),
-                return_type: tint.clone(),
-                type_param_list: vec![],
-            },
+        TFuncDef {
+            name: "neg".to_owned(),
+            args: args1(&tint),
+            return_name: "__ret__".to_owned(),
+            return_type: tint.clone(),
+            type_params: vec![],
             optimizations: vec![
                 Optimization {
                     debug_name: "z32_neg".to_owned(),
@@ -100,18 +102,21 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
                 },
             ],
             preconditions: vec![],
+            attributes: vec![],
+            postconditions: vec![],
+            side_effects: HashSet::new(),
+            sees: vec![],
+            body: None,
         },
     );
 
     for (symbol, name) in [("+", "add"), ("-", "sub"), ("*", "mul")] {
         functions.insert(
             symbol.to_owned(),
-            TOverloadedFunc {
-                headline: TFunc {
-                    args: args2(&tint, &tint),
-                    return_type: tint.clone(),
-                    type_param_list: vec![],
-                },
+            TFuncDef {
+                args: args2(&tint, &tint),
+                return_type: tint.clone(),
+                type_params: vec![],
                 optimizations: vec![
                     Optimization {
                         debug_name: format!("z32_{}", name),
@@ -127,6 +132,13 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
                     },
                 ],
                 preconditions: vec![],
+                attributes: vec![],
+                name: symbol.to_owned(),
+                return_name: "__ret__".to_owned(),
+                postconditions: vec![],
+                side_effects: HashSet::new(),
+                sees: vec![],
+                body: None,
             },
         );
     }
@@ -134,12 +146,10 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     for (symbol, name) in [("/", "div"), ("%", "mod")] {
         functions.insert(
             symbol.to_owned(),
-            TOverloadedFunc {
-                headline: TFunc {
-                    args: args2(&tint, &tint),
-                    return_type: tint.clone(),
-                    type_param_list: vec![],
-                },
+            TFuncDef {
+                args: args2(&tint, &tint),
+                return_type: tint.clone(),
+                type_params: vec![],
                 optimizations: vec![
                     Optimization {
                         debug_name: format!("u32_{}", name),
@@ -167,6 +177,13 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
                     },
                 ],
                 preconditions: vec![tint.var("arg1").ne(&TExpr::zero()).unwrap()],
+                attributes: vec![],
+                name: symbol.to_owned(),
+                return_name: "__ret__".to_owned(),
+                postconditions: vec![],
+                side_effects: HashSet::new(),
+                sees: vec![],
+                body: None,
             },
         );
     }
@@ -174,24 +191,25 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     insert_multiple(
         &mut functions,
         &["&&", "||"],
-        TOverloadedFunc::simple(&[tbool.clone(), tbool.clone()], &tbool),
+        TFuncDef::simple("", &[tbool.clone(), tbool.clone()], &tbool),
     );
 
     functions.insert(
         "println".to_owned(),
-        TOverloadedFunc::simple(from_ref(&tstr), &tvoid),
+        TFuncDef::simple("println", from_ref(&tstr), &tvoid),
     );
     functions.insert(
         "assert".to_owned(),
-        TOverloadedFunc::simple(from_ref(&tbool), &tvoid),
+        TFuncDef::simple("assert", from_ref(&tbool), &tvoid),
     );
     functions.insert(
         "seq_len".to_owned(),
-        TOverloadedFunc::psimple(from_ref(&seqt), &tint, &["T"]),
+        TFuncDef::simple("seq_len", from_ref(&seqt), &tint),
     );
     functions.insert(
         "seq_map".to_owned(),
-        TOverloadedFunc::psimple(
+        TFuncDef::psimple(
+            "seq_map",
             &[seqt.clone(), Type::lambda(from_ref(&tparam), &uparam)],
             &sequ,
             &["T", "U"],
@@ -199,7 +217,8 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
     );
     functions.insert(
         "seq_foldl".to_owned(),
-        TOverloadedFunc::psimple(
+        TFuncDef::psimple(
+            "seq_foldl",
             &[
                 seqt.clone(),
                 Type::lambda(&[uparam.clone(), tparam.clone()], &uparam),

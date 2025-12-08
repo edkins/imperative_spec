@@ -297,7 +297,8 @@ impl TFuncDef {
         let mut env = CEnv::new(verbosity);
         let body = self
             .body
-            .choose_optimization(&mut env, &TypeExpectations::new(&self.return_type));
+            .as_ref()
+            .map(|b| b.choose_optimization(&mut env, &TypeExpectations::new(&self.return_type)));
 
         for attrib in &self.attributes {
             #[allow(irrefutable_let_patterns)]
@@ -322,6 +323,8 @@ impl TFuncDef {
             sees: self.sees.clone(),
             body,
             side_effects: self.side_effects.clone(),
+            optimizations: self.optimizations.clone(),
+            type_params: self.type_params.clone(),
         })
     }
 }

@@ -107,7 +107,9 @@ pub struct TFuncDef {
     pub postconditions: Vec<TExpr>,
     pub side_effects: HashSet<String>,
     pub sees: Vec<String>,
-    pub body: TExpr,
+    pub body: Option<TExpr>,  // None for builtin funcs
+    pub optimizations: Vec<Optimization>,
+    pub type_params: Vec<String>,
 }
 
 pub struct TSourceFile {
@@ -224,9 +226,12 @@ impl std::fmt::Display for TFuncDef {
                 writeln!(f, "     {}", post)?;
             }
         }
-        writeln!(f, "{{")?;
-        writeln!(f, "  {}", self.body)?;
-        writeln!(f, "}}")
+        if let Some(body) = &self.body {
+            writeln!(f, "{{")?;
+            writeln!(f, "  {}", body)?;
+            writeln!(f, "}}")?;
+        }
+        Ok(())
     }
 }
 

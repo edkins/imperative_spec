@@ -10,7 +10,6 @@ use crate::{
     check::{
         builtins,
         optimization_chooser::OptimizationError,
-        overloads::{TFunc, TOverloadedFunc},
         ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt},
         ztype_inference::TypeError,
     },
@@ -57,21 +56,10 @@ impl From<OptimizationError> for CheckError {
     }
 }
 
-// #[derive(Clone)]
-// struct CheckedFunction {
-//     name: String,
-//     args: Vec<Arg>,
-//     return_type: Type,
-//     return_value: String,
-//     side_effects: HashSet<String>,
-//     preconditions: Vec<TExpr>,
-//     postconditions: Vec<TExpr>,
-//     body: Option<TExpr>,
-// }
-
 #[derive(Clone)]
 struct CheckedVar {
     name: String,
+    z3: Dynamic,
     version: usize,
     max_version: usize,
     mutable: bool,
@@ -84,7 +72,7 @@ struct Env {
     vars: HashMap<String, CheckedVar>,
     assumptions: Vec<z3::ast::Bool>,
     side_effects: HashSet<String>,
-    builtins: HashMap<String, TOverloadedFunc>,
+    builtins: HashMap<String, TFuncDef>,
     other_funcs: Vec<TFuncDef>,
     verbosity: u8,
     type_param_list: Vec<String>,
@@ -102,6 +90,19 @@ impl TFuncDef {
         let ret_sort = self.return_type.to_z3_sort()?;
         Ok(z3::FuncDecl::new(self.name.clone(), &arg_refs, &ret_sort))
     }
+
+    fn postconditions_and_type_postconditions(&self) -> Result<Vec<TExpr>, CheckError> {
+        let mut postconditions = self.postconditions.clone();
+        let return_var = TExpr::Variable {
+            name: self.return_name.clone(),
+            typ: self.return_type.clone(),
+        };
+        let type_postconditions = self
+            .return_type
+            .type_assertions(return_var, &[])?;
+        postconditions.extend(type_postconditions);
+        Ok(postconditions)
+    }
 }
 
 impl From<NulError> for CheckError {
@@ -113,26 +114,56 @@ impl From<NulError> for CheckError {
 }
 
 impl CheckedVar {
-    fn z3_name(&self) -> Result<String, CheckError> {
-        if self.hidden {
-            Err(CheckError {
-                message: format!("Variable {} is out of scope", self.name),
-            })
-        } else if self.mutable || self.version > 0 {
-            Ok(format!("{}:{}", self.name, self.version))
+    // fn z3_name(&self) -> Result<String, CheckError> {
+    //     if self.hidden {
+    //         Err(CheckError {
+    //             message: format!("Variable {} is out of scope", self.name),
+    //         })
+    //     } else if self.mutable || self.version > 0 {
+    //         Ok(format!("{}:{}", self.name, self.version))
+    //     } else {
+    //         Ok(self.name.clone())
+    //     }
+    // }
+
+    // fn z3_const(&self) -> Result<Dynamic, CheckError> {
+    //     self.var_type.to_z3_const(&self.z3_name()?)
+    // }
+
+    fn new(name: &str, mutable: bool, ty: &Type) -> Self {
+        let z3name = if mutable {
+            format!("{}:0", name)
         } else {
-            Ok(self.name.clone())
+            name.to_owned()
+        };
+        CheckedVar {
+            z3: ty.to_z3_const(&z3name).unwrap(),
+            name: name.to_owned(),
+            version: 0,
+            max_version: 0,
+            hidden: false,
+            mutable,
+            var_type: ty.clone(),
         }
     }
 
-    fn z3_const(&self) -> Result<Dynamic, CheckError> {
-        self.var_type.to_z3_const(&self.z3_name()?)
+    fn new_with_value(name: &str, ty: &Type, value: &Dynamic) -> Self {
+        CheckedVar {
+            z3: value.clone(),
+            name: name.to_owned(),
+            version: 0,
+            max_version: 0,
+            hidden: false,
+            mutable: false,
+            var_type: ty.clone(),
+        }
     }
 
     fn mutate(&mut self) {
         assert!(!self.hidden);
         self.max_version += 1;
         self.version = self.max_version;
+        self.z3 = self.var_type.to_z3_const(&format!("{}:{}", self.name, self.version)).unwrap();
     }
 
     fn replace(&mut self, mutable: bool, typ: &Type) {
@@ -141,6 +172,7 @@ impl CheckedVar {
         self.version = self.max_version;
         self.mutable = mutable;
         self.var_type = typ.clone();
+        self.z3 = self.var_type.to_z3_const(&format!("{}:{}", self.name, self.version)).unwrap();
     }
 }
 
@@ -213,7 +245,7 @@ impl Env {
 
     fn get_var(&self, name: &str) -> Result<Dynamic, CheckError> {
         if let Some(info) = self.vars.get(name) {
-            info.z3_const()
+            Ok(info.z3.clone())
         } else {
             Err(CheckError {
                 message: format!("Undefined variable: {}", name),
@@ -222,18 +254,17 @@ impl Env {
     }
 
     fn insert_var(&mut self, name: &str, mutable: bool, ty: &Type) -> Result<Dynamic, CheckError> {
-        self.vars
+        Ok(self.vars
             .entry(name.to_owned())
             .and_modify(|info| info.replace(mutable, ty))
-            .or_insert_with(|| CheckedVar {
-                name: name.to_owned(),
-                version: 0,
-                max_version: 0,
-                hidden: false,
-                mutable,
-                var_type: ty.clone(),
-            })
-            .z3_const()
+            .or_insert_with(|| CheckedVar::new(name, mutable, ty))
+            .z3.clone())
+    }
+
+    fn insert_var_with_value(&mut self, name: &str, ty: &Type, value: &Dynamic) -> Result<(), CheckError> {
+        assert!(!self.vars.contains_key(name), "Variable {} already defined", name);
+        self.vars.insert(name.to_owned(), CheckedVar::new_with_value(name, ty, value));
+        Ok(())
     }
 
     fn assume_exprs(&mut self, exprs: &[TExpr]) -> Result<(), CheckError> {
@@ -350,7 +381,7 @@ impl Env {
             });
         }
         info.mutate();
-        let new_var = info.z3_const()?;
+        let new_var = info.z3.clone();
         let conds = info.var_type.type_assertions(
             TExpr::Variable {
                 name: var.to_owned(),
@@ -360,6 +391,19 @@ impl Env {
         )?;
         self.assume(new_var.safe_eq(&value)?);
         self.assert_exprs(&conds, "Type assertion failed in assignment")
+    }
+
+    fn fold_in_assumptions(&mut self, other: &Env) {
+        for assumption in &other.assumptions {
+            if !self.assumptions.contains(assumption) {
+                self.assumptions.push(assumption.clone());
+            }
+        }
+
+        if self.verbosity >= 2 {
+            println!("Folding in assumptions:");
+            self.check_consistency();
+        }
     }
 
     fn fold_in_scope(&mut self, other: &Env) {
@@ -503,7 +547,6 @@ fn void_value() -> Dynamic {
 }
 
 fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynamic, CheckError> {
-    // TODO: check return type is correct?
     match (name, args.len()) {
         ("==", 2) => Ok(args[0].safe_eq(&args[1])?.into()),
         ("!=", 2) => Ok(args[0].safe_eq(&args[1])?.not().into()),
@@ -566,45 +609,27 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
             if let Some(user_func) = env.other_funcs.iter().find(|f| f.name == name) {
                 let user_func = user_func.clone(); // clone it because we're doing other things to env and they conflict
                 let func_decl = user_func.z3_func_decl()?;
-                let mut call_env = env.enter_call_scope(&user_func, args)?;
-                // Already done!
-                // call_env.check_preconditions(&user_func)?;
 
                 let z3_argrefs = args
                     .iter()
                     .map(|a| a as &dyn z3::ast::Ast)
                     .collect::<Vec<&dyn z3::ast::Ast>>();
+                let ast = func_decl.apply(&z3_argrefs);
 
-                let retvar =
-                    call_env.insert_var(&user_func.return_name, false, &user_func.return_type)?;
-
-                // we can assume the postconditions (which includes type info e.g. bounds on the return value)
-                call_env.assume_exprs(&user_func.postconditions)?;
-                // assume any conditions on the return type
-                call_env.assume_exprs(&user_func.return_type.type_assertions(
-                    TExpr::Variable {
-                        name: user_func.return_name.clone(),
-                        typ: user_func.return_type.clone(),
-                    },
-                    &call_env.type_param_list,
-                )?)?;
                 // don't forget the side effects
                 for effect in &user_func.side_effects {
-                    call_env.side_effects.insert(effect.clone());
+                    env.side_effects.insert(effect.clone());
                 }
 
                 // If function is visible, check it (which will add relevant assumptions)
                 if env.sees.contains(&user_func.name) {
-                    let body_z3_value = user_func.body.z3_check(&mut call_env)?.0;
-                    call_env.assume(retvar.safe_eq(&body_z3_value)?);
+                    assert!(user_func.body.is_some());
+                    let mut call_env = env.enter_call_scope(&user_func, args)?;
+                    let body_z3_value = user_func.body.as_ref().unwrap().z3_check(&mut call_env)?.0;
+                    call_env.assume(ast.safe_eq(&body_z3_value)?);
+                    // fold back into main env
+                    env.fold_in_scope(&call_env);
                 }
-
-                // fold back into main env
-                env.fold_in_scope(&call_env);
-
-                // unify return value with function call
-                let ast = func_decl.apply(&z3_argrefs);
-                env.assume(retvar.safe_eq(&ast)?);
 
                 Ok(ast)
             } else {
@@ -617,40 +642,31 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
 }
 
 impl Env {
-    fn get_overloaded_func(&self, name: &str) -> Result<TOverloadedFunc, CheckError> {
+    fn get_overloaded_func(&self, name: &str) -> Result<TFuncDef, CheckError> {
         if self.builtins.contains_key(name) {
             Ok(self.builtins.get(name).unwrap().clone())
         } else {
-            let func = self
-                .other_funcs
+            self.other_funcs
                 .iter()
                 .find(|f| f.name == name)
-                .ok_or(CheckError {
+                .cloned()
+                .ok_or_else(|| CheckError {
                     message: format!("Undefined function: {}", name),
-                })?;
-            Ok(TOverloadedFunc {
-                headline: TFunc {
-                    args: func.args.clone(),
-                    return_type: func.return_type.clone(),
-                    type_param_list: vec![],
-                },
-                optimizations: vec![],
-                preconditions: func.preconditions.clone(),
-            })
+                })
         }
     }
 
     fn keep_optimizations(
         &mut self,
-        func: &TOverloadedFunc,
+        func: &TFuncDef,
         exprs: &[TExpr],
-    ) -> Result<TOverloadedFunc, CheckError> {
+    ) -> Result<TFuncDef, CheckError> {
         let arg_types = exprs.iter().map(|e| e.typ()).collect::<Vec<Type>>();
         let func = func.instantiate_from_types(&arg_types)?;
         assert!(arg_types.len() == exprs.len());
         let mut optimizations = vec![];
         assert!(
-            func.headline.type_param_list.is_empty(),
+            func.type_params.is_empty(),
             "Type parameters not supported in z3 check yet"
         );
         for opt in &func.optimizations {
@@ -669,10 +685,19 @@ impl Env {
                 println!("Rejecting optimization {}", opt.debug_name);
             }
         }
-        Ok(TOverloadedFunc {
-            headline: func.headline.clone(),
-            optimizations,
+        Ok(TFuncDef {
+            name: func.name.clone(),
+            args: func.args.clone(),
+            return_name: func.return_name.clone(),
+            return_type: func.return_type.clone(),
+            type_params: func.type_params.clone(),
+            attributes: func.attributes.clone(),
             preconditions: func.preconditions.clone(),
+            postconditions: func.postconditions.clone(),
+            side_effects: func.side_effects.clone(),
+            sees: func.sees.clone(),
+            body: func.body.clone(),
+            optimizations,
         })
     }
 }
@@ -696,7 +721,7 @@ impl TExpr {
                     .iter()
                     .map(|(_, texpr)| texpr.clone())
                     .collect::<Vec<_>>();
-                let func: TOverloadedFunc = env.get_overloaded_func(name)?;
+                let func = env.get_overloaded_func(name)?;
                 let func = env.keep_optimizations(&func, args)?;
                 let preconditions = func.lookup_preconditions(args)?;
                 if env.verbosity >= 2 && !func.preconditions.is_empty() {
@@ -712,14 +737,47 @@ impl TExpr {
                 if env.verbosity >= 2 && !func.preconditions.is_empty() {
                     println!("End precondition check for function call {}", name);
                 }
-                Ok((
-                    z3_function_call(name, &z3args, env)?,
-                    TExpr::FunctionCall {
+                let ast = z3_function_call(name, &z3args, env)?;
+                let new_expr = TExpr::FunctionCall {
                         name: name.clone(),
                         args: newargs,
-                        return_type: func.headline.return_type.clone(),
+                        return_type: func.return_type.clone(),
                         optimizations: func.optimizations.clone(),
-                    },
+                    };
+
+                let postconditions = func.postconditions_and_type_postconditions()?;
+                if !postconditions.is_empty() {
+                    if env.verbosity >= 2 {
+                        println!(
+                            "Assuming postconditions for function call {}: {:?}",
+                            name, postconditions
+                        );
+                    }
+                    let mut new_env = Env::new(&env.other_funcs, &func.sees, env.verbosity);
+                    for i in 0..args.len() {
+                        new_env.insert_var_with_value(
+                            &func.args[i].name,
+                            &func.args[i].arg_type,
+                            &z3args[i],
+                        )?;
+                    }
+                    new_env.insert_var_with_value(&func.return_name, &func.return_type, &ast)?;
+                    for postcondition in &postconditions {
+                        let cond_z3_value = postcondition.z3_check(&mut new_env)?.0;
+                        // if env.verbosity >= 2 {
+                        //     println!(
+                        //         "Assuming postcondition for function call {}: {:?}",
+                        //         name, cond_z3_value
+                        //     );
+                        // }
+                        new_env.assume(boolean(&cond_z3_value)?);
+                    }
+                    env.fold_in_assumptions(&new_env);
+                }
+
+                Ok((
+                    ast,
+                    new_expr,
                 ))
             }
             TExpr::Semicolon(stmt, expr) => {
@@ -819,7 +877,8 @@ fn z3_check_funcdef(
         )?)?;
     }
     env.assume_exprs(&func.preconditions)?;
-    let (body_z3_value, new_body) = func.body.z3_check(&mut env)?;
+    assert!(func.body.is_some());
+    let (body_z3_value, new_body) = func.body.as_ref().unwrap().z3_check(&mut env)?;
 
     let ret = &func.return_name;
     let ret_var = env.insert_var(ret, false, &func.return_type)?;
@@ -852,7 +911,9 @@ fn z3_check_funcdef(
         preconditions: func.preconditions.clone(),
         postconditions: func.postconditions.clone(),
         sees: func.sees.clone(),
-        body: new_body,
+        body: Some(new_body),
+        type_params: func.type_params.clone(),
+        optimizations: func.optimizations.clone(),
     })
 }
 
@@ -868,7 +929,7 @@ pub fn z3_check(source_file: &SourceFile, verbosity: u8) -> Result<(), CheckErro
         let checked_func = z3_check_funcdef(func, &other_funcs, verbosity)?;
         other_funcs.push(checked_func.clone());
         if verbosity >= 2 {
-            println!("Checked func body: {}", checked_func.body);
+            println!("Checked func body: {}", checked_func.body.unwrap());
         }
     }
 
