@@ -399,11 +399,7 @@ impl Env {
         }
     }
 
-    fn enter_call_scope(
-        &self,
-        func: &TFuncDef,
-        args: &[Dynamic],
-    ) -> Result<Env, CheckError> {
+    fn enter_call_scope(&self, func: &TFuncDef, args: &[Dynamic]) -> Result<Env, CheckError> {
         let mut new_env = self.clone();
         if func.args.len() != args.len() {
             return Err(CheckError {
@@ -669,13 +665,8 @@ impl Env {
             }
             if ok {
                 optimizations.push(opt.clone());
-            } else {
-                if self.verbosity >= 2 {
-                    println!(
-                        "Rejecting optimization {}",
-                        opt.debug_name
-                    );
-                }
+            } else if self.verbosity >= 2 {
+                println!("Rejecting optimization {}", opt.debug_name);
             }
         }
         Ok(TOverloadedFunc {

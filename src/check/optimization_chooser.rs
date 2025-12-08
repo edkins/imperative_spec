@@ -8,7 +8,7 @@ use crate::{
     syntax::ast::{Literal, Type},
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct CEnv {
     uses: HashMap<String, TypeExpectations>,
     decisions: Vec<String>,
@@ -150,6 +150,14 @@ impl CEnv {
     fn lookup_expectations(&self, name: &str) -> TypeExpectations {
         self.uses.get(name).cloned().unwrap_or_default()
     }
+
+    fn new(verbosity: u8) -> Self {
+        Self {
+            uses: HashMap::new(),
+            decisions: vec![],
+            verbosity,
+        }
+    }
 }
 
 impl TExpr {
@@ -177,11 +185,16 @@ impl TExpr {
                 if env.verbosity >= 2 {
                     println!(
                         "Choosing optimization for function call {} with expectations {}, available optimizations {:?}",
-                        name, expectations, optimizations.iter().map(|o| o.debug_name.clone()).collect::<Vec<String>>()
+                        name,
+                        expectations,
+                        optimizations
+                            .iter()
+                            .map(|o| o.debug_name.clone())
+                            .collect::<Vec<String>>()
                     );
                 }
                 if let Some(optim) = expectations.decide_optimization(return_type, optimizations) {
-                    env.decisions.insert(0, optim.debug_name.clone());  // insert at beginning since we're going backwards
+                    env.decisions.insert(0, optim.debug_name.clone()); // insert at beginning since we're going backwards
                     assert!(optim.arg_types.len() == args.len());
                     TExpr::FunctionCall {
                         name: name.clone(),
@@ -281,8 +294,7 @@ impl TStmt {
 
 impl TFuncDef {
     pub fn choose_optimization(&self, verbosity: u8) -> Result<TFuncDef, OptimizationError> {
-        let mut env = CEnv::default();
-        env.verbosity = verbosity;
+        let mut env = CEnv::new(verbosity);
         let body = self
             .body
             .choose_optimization(&mut env, &TypeExpectations::new(&self.return_type));
