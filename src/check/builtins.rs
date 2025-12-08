@@ -204,7 +204,7 @@ pub fn builtins() -> HashMap<String, TFuncDef> {
     );
     functions.insert(
         "seq_len".to_owned(),
-        TFuncDef::simple("seq_len", from_ref(&seqt), &tint),
+        TFuncDef::psimple("seq_len", from_ref(&seqt), &tint, &["T"]),
     );
     functions.insert(
         "seq_map".to_owned(),

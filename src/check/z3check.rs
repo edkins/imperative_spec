@@ -753,14 +753,7 @@ impl TExpr {
                             name, postconditions
                         );
                     }
-                    let mut new_env = Env::new(&env.other_funcs, &func.sees, env.verbosity);
-                    for i in 0..args.len() {
-                        new_env.insert_var_with_value(
-                            &func.args[i].name,
-                            &func.args[i].arg_type,
-                            &z3args[i],
-                        )?;
-                    }
+                    let mut new_env = env.enter_call_scope(&func, &z3args)?;
                     new_env.insert_var_with_value(&func.return_name, &func.return_type, &ast)?;
                     for postcondition in &postconditions {
                         let cond_z3_value = postcondition.z3_check(&mut new_env)?.0;

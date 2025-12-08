@@ -283,6 +283,18 @@ impl TFuncDef {
 
         let mut preconditions = vec![];
 
+        for (arg, param) in args.iter().zip(&self.args) {
+            if !arg.typ().compatible_with(&param.arg_type) {
+                compatible = false;
+                break;
+            }
+            preconditions.extend_from_slice(
+                &param
+                    .arg_type
+                    .type_assertions(arg.clone(), &self.type_params)?,
+            );
+        }
+
         if !self.preconditions.is_empty() {
             let arg_mapping = self
                 .args
@@ -295,17 +307,6 @@ impl TFuncDef {
             }
         }
 
-        for (arg, param) in args.iter().zip(&self.args) {
-            if !arg.typ().compatible_with(&param.arg_type) {
-                compatible = false;
-                break;
-            }
-            preconditions.extend_from_slice(
-                &param
-                    .arg_type
-                    .type_assertions(arg.clone(), &self.type_params)?,
-            );
-        }
         if compatible {
             return Ok(preconditions);
         }
