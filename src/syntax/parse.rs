@@ -583,15 +583,21 @@ fn stmt_let(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = keyword(Word::Let)(input)?;
     let (input, mutable) = opt(keyword(Word::Mut)).parse(input)?;
     let (input, name) = identifier(input)?;
+    let (input, t) = opt(preceded(symbol(Symbol::Colon), typ)).parse(input)?;
     if mutable.is_some() {
-        let (input, typ) = preceded(symbol(Symbol::Colon), typ).parse(input)?;
+        if t.is_none() {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )));
+        }
         let (input, _) = symbol(Symbol::Assign)(input)?;
         let (input, value) = expr_comma(input)?;
-        Ok((input, Stmt::LetMut { name, typ, value }))
+        Ok((input, Stmt::LetMut { name, typ: t.unwrap(), value }))
     } else {
         let (input, _) = symbol(Symbol::Assign)(input)?;
         let (input, value) = expr_comma(input)?;
-        Ok((input, Stmt::Let { name, value }))
+        Ok((input, Stmt::Let { name, typ: t, value }))
     }
 }
 

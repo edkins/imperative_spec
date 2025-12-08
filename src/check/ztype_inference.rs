@@ -207,15 +207,29 @@ impl Stmt {
                 let te = e.type_check(env)?;
                 Ok(TStmt::Expr(te))
             }
-            Stmt::Let { name, value } => {
+            Stmt::Let { name, typ, value } => {
                 let tvalue = value.type_check(env)?;
-                let vtype = tvalue.typ();
+                let vtype = if let Some(typ) = typ {
+                    if !tvalue.typ().compatible_with(typ) {
+                        return Err(TypeError {
+                            message: format!(
+                                "Type of value {} does not match declared type {} for variable {}",
+                                tvalue.typ(),
+                                typ,
+                                name
+                            ),
+                        });
+                    }
+                    typ.clone()
+                } else {
+                    tvalue.typ()
+                };
                 env.variables.insert(name.clone(), vtype.clone());
                 Ok(TStmt::Let {
                     name: name.clone(),
                     typ: vtype,
                     mutable: false,
-                    type_declared: false,
+                    type_declared: typ.is_some(),
                     value: tvalue,
                 })
             }

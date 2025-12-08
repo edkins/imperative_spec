@@ -218,7 +218,13 @@ impl Display for Stmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Stmt::Expr(expr) => write!(f, "{}", expr),
-            Stmt::Let { name, value } => write!(f, "let {} = {}", name, value),
+            Stmt::Let { name, typ, value } => {
+                if let Some(typ) = typ {
+                    write!(f, "let {}: {} = {}", name, typ, value)
+                } else {
+                    write!(f, "let {} = {}", name, value)
+                }
+            }
             Stmt::LetMut { name, typ, value } => {
                 write!(f, "let mut {}: {} = {}", name, typ, value)
             }
@@ -332,6 +338,7 @@ mod test {
                     Expr::Semicolon(
                         Box::new(Stmt::Let {
                             name: "y".to_owned(),
+                            typ: None,
                             value: Expr::Literal(Literal::I64(10)),
                         }),
                         Box::new(Expr::Variable("y".to_owned())),

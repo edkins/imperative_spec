@@ -59,6 +59,7 @@ pub enum Stmt {
     Expr(Expr),
     Let {
         name: String,
+        typ: Option<Type>,
         value: Expr,
     },
     LetMut {
