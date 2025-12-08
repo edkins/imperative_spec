@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::{
     check::overloads::Optimization,
     syntax::ast::{Arg, Literal, Type, TypeArg},
@@ -91,9 +89,11 @@ impl TExpr {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum TFuncAttribute {
     CheckDecisions(Vec<String>),
+    Sees(String),
+    SideEffect(String),
 }
 
 #[derive(Clone)]
@@ -105,8 +105,6 @@ pub struct TFuncDef {
     pub return_type: Type,
     pub preconditions: Vec<TExpr>,
     pub postconditions: Vec<TExpr>,
-    pub side_effects: HashSet<String>,
-    pub sees: Vec<String>,
     pub body: Option<TExpr>,  // None for builtin funcs
     pub optimizations: Vec<Optimization>,
     pub type_params: Vec<String>,

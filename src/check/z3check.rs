@@ -10,7 +10,7 @@ use crate::{
     check::{
         builtins,
         optimization_chooser::OptimizationError,
-        ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt},
+        ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt},
         ztype_inference::TypeError,
     },
     syntax::ast::*,
@@ -230,7 +230,17 @@ impl Type {
 }
 
 impl Env {
-    fn new(other_funcs: &[TFuncDef], sees: &[String], verbosity: u8) -> Self {
+    fn new(other_funcs: &[TFuncDef], attributes: &[TFuncAttribute], verbosity: u8) -> Self {
+        let sees = attributes
+            .iter()
+            .filter_map(|attr| {
+                if let TFuncAttribute::Sees(name) = attr {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<String>>();
         Env {
             vars: HashMap::new(),
             assumptions: Vec::new(),
@@ -362,14 +372,14 @@ impl Env {
         self.side_effects.insert("malloc".to_owned());
     }
 
-    fn print_side_effects(&self) {
-        let mut effects: Vec<_> = self.side_effects.iter().collect();
-        effects.sort();
-        for effect in &effects {
-            print!(" {{{}}}", effect);
-        }
-        println!();
-    }
+    // fn print_side_effects(&self) {
+    //     let mut effects: Vec<_> = self.side_effects.iter().collect();
+    //     effects.sort();
+    //     for effect in &effects {
+    //         print!(" {{{}}}", effect);
+    //     }
+    //     println!();
+    // }
 
     fn assign(&mut self, var: &str, value: Dynamic) -> Result<(), CheckError> {
         let info = self.vars.get_mut(var).ok_or(CheckError {
@@ -617,8 +627,10 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
                 let ast = func_decl.apply(&z3_argrefs);
 
                 // don't forget the side effects
-                for effect in &user_func.side_effects {
-                    env.side_effects.insert(effect.clone());
+                for effect in &user_func.attributes {
+                    if let TFuncAttribute::SideEffect(effect) = effect {
+                        env.side_effects.insert(effect.clone());
+                    }
                 }
 
                 // If function is visible, check it (which will add relevant assumptions)
@@ -694,8 +706,6 @@ impl Env {
             attributes: func.attributes.clone(),
             preconditions: func.preconditions.clone(),
             postconditions: func.postconditions.clone(),
-            side_effects: func.side_effects.clone(),
-            sees: func.sees.clone(),
             body: func.body.clone(),
             optimizations,
         })
@@ -853,7 +863,7 @@ fn z3_check_funcdef(
     if verbosity >= 2 {
         println!("\n\n\nChecking function: {}. New env.", func.name);
     }
-    let mut env = Env::new(other_funcs, &func.sees, verbosity);
+    let mut env = Env::new(other_funcs, &func.attributes, verbosity);
     for arg in &func.args {
         env.insert_var(&arg.name, false, &arg.arg_type)?;
         assert!(
@@ -892,18 +902,23 @@ fn z3_check_funcdef(
     // now check all the postconditions
     env.assert_exprs(&func.postconditions, "Postcondition failed")?;
 
+    let mut attributes = func.attributes.clone();
+    for effect in &env.side_effects {
+        let se = TFuncAttribute::SideEffect(effect.clone());
+        if !attributes.contains(&se) {
+            attributes.push(se);
+        }
+    }
+
     print!("Checked function: {}", func.name);
-    env.print_side_effects();
     Ok(TFuncDef {
-        attributes: func.attributes.clone(),
+        attributes,
         name: func.name.clone(),
         args: func.args.clone(),
         return_type: func.return_type.clone(),
         return_name: func.return_name.clone(),
-        side_effects: env.side_effects,
         preconditions: func.preconditions.clone(),
         postconditions: func.postconditions.clone(),
-        sees: func.sees.clone(),
         body: Some(new_body),
         type_params: func.type_params.clone(),
         optimizations: func.optimizations.clone(),

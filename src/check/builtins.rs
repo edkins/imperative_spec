@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, slice::from_ref};
+use std::{collections::HashMap, slice::from_ref};
 
 use crate::{
     check::{
@@ -104,8 +104,6 @@ pub fn builtins() -> HashMap<String, TFuncDef> {
             preconditions: vec![],
             attributes: vec![],
             postconditions: vec![],
-            side_effects: HashSet::new(),
-            sees: vec![],
             body: None,
         },
     );
@@ -136,8 +134,6 @@ pub fn builtins() -> HashMap<String, TFuncDef> {
                 name: symbol.to_owned(),
                 return_name: "__ret__".to_owned(),
                 postconditions: vec![],
-                side_effects: HashSet::new(),
-                sees: vec![],
                 body: None,
             },
         );
@@ -181,8 +177,6 @@ pub fn builtins() -> HashMap<String, TFuncDef> {
                 name: symbol.to_owned(),
                 return_name: "__ret__".to_owned(),
                 postconditions: vec![],
-                side_effects: HashSet::new(),
-                sees: vec![],
                 body: None,
             },
         );

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     check::{
@@ -131,8 +131,6 @@ impl TFuncDef {
             optimizations: vec![],
             preconditions: vec![],
             postconditions: vec![],
-            side_effects: HashSet::new(),
-            sees: vec![],
             body: None,
             type_params: type_param_list.iter().map(|s| s.to_string()).collect(),
         }
@@ -210,8 +208,6 @@ impl TFuncDef {
                 .iter()
                 .map(|e| e.instantiate(mapping))
                 .collect::<Result<Vec<TExpr>, TypeError>>()?,
-            side_effects: self.side_effects.clone(),
-            sees: self.sees.clone(),
             body: self.body.as_ref().map(|b| b.instantiate(mapping)).transpose()?,
         })
     }

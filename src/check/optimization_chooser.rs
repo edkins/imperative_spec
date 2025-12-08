@@ -320,9 +320,7 @@ impl TFuncDef {
             attributes: self.attributes.clone(),
             preconditions: self.preconditions.clone(),
             postconditions: self.postconditions.clone(),
-            sees: self.sees.clone(),
             body,
-            side_effects: self.side_effects.clone(),
             optimizations: self.optimizations.clone(),
             type_params: self.type_params.clone(),
         })

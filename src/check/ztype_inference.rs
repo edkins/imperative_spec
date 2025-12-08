@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::check::builtins::builtins;
 use crate::check::ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt};
@@ -350,7 +350,6 @@ impl FuncDef {
         }
         let mut preconditions = vec![];
         let mut postconditions = vec![];
-        let sees = self.sees.clone();
         preconditions.extend(
             self.preconditions
                 .iter()
@@ -380,11 +379,14 @@ impl FuncDef {
             })
             .collect::<Vec<_>>();
 
-        let attributes = self
+        let mut attributes = self
             .attributes
             .iter()
             .map(TFuncAttribute::from_expr)
             .collect::<Result<Vec<TFuncAttribute>, TypeError>>()?;
+        for see in &self.sees {
+            attributes.push(TFuncAttribute::Sees(see.clone()));
+        }
 
         Ok(TFuncDef {
             attributes,
@@ -397,8 +399,6 @@ impl FuncDef {
                 .unwrap_or_else(|| "__ret__".to_owned()),
             preconditions,
             postconditions,
-            sees,
-            side_effects: HashSet::new(),
             body: Some(tbody),
             optimizations: vec![],
             type_params: vec![],
