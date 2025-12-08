@@ -207,7 +207,31 @@ impl std::fmt::Display for TStmt {
 
 impl std::fmt::Display for TFuncDef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "fn {}(", self.name)?;
+        for attr in &self.attributes {
+            match attr {
+                TFuncAttribute::CheckDecisions(decisions) => {
+                    writeln!(f, "#[check_decisions({})]", decisions.join(", "))?;
+                }
+                TFuncAttribute::Sees(module) => {
+                    writeln!(f, "#[sees({})]", module)?;
+                }
+                TFuncAttribute::SideEffect(effect) => {
+                    writeln!(f, "#[side_effect({})]", effect)?;
+                }
+            }
+        }
+        writeln!(f, "fn {}", self.name)?;
+        if !self.type_params.is_empty() {
+            write!(f, "<")?;
+            for (i, param) in self.type_params.iter().enumerate() {
+                write!(f, "{}", param)?;
+                if i != self.type_params.len() - 1 {
+                    write!(f, ", ")?;
+                }
+            }
+            writeln!(f, ">")?;
+        }
+        writeln!(f, "(")?;
         for arg in &self.args {
             writeln!(f, "    {}: {},", arg.name, arg.arg_type)?;
         }
