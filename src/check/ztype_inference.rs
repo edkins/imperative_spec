@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use crate::check::builtins::builtins;
+use crate::check::builtins::lookup_builtin;
+use crate::check::ops::Ops;
 use crate::check::ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt};
 use crate::syntax::ast::{Arg, AssignOp, Expr, FuncDef, SourceFile, Stmt, Type, TypeArg};
 
@@ -35,53 +36,53 @@ impl Type {
         }
     }
 
-    pub fn call_lambda(&self, arg_types: &[Type]) -> Result<Type, TypeError> {
-        if self.name != "Lambda" {
-            return Err(TypeError {
-                message: format!("Type {} is not a Lambda", self),
-            });
-        }
-        if self.type_args.is_empty() {
-            return Err(TypeError {
-                message: format!("Lambda type {} has no type arguments", self),
-            });
-        }
-        if self.type_args.len() != arg_types.len() + 1 {
-            return Err(TypeError {
-                message: format!(
-                    "Lambda type {} expects {} arguments, got {}",
-                    self,
-                    self.type_args.len() - 1,
-                    arg_types.len()
-                ),
-            });
-        }
-        for (i, arg_type) in arg_types.iter().enumerate() {
-            match &self.type_args[i] {
-                TypeArg::Type(t) => {
-                    if !arg_type.is_subtype_of(t) {
-                        return Err(TypeError {
-                            message: format!(
-                                "Lambda argument type mismatch: expected {}, got {}",
-                                t, arg_type
-                            ),
-                        });
-                    }
-                }
-                _ => {
-                    return Err(TypeError {
-                        message: format!("Lambda argument type {} is not a Type", self),
-                    });
-                }
-            }
-        }
-        match &self.type_args[self.type_args.len() - 1] {
-            TypeArg::Type(t) => Ok(t.clone()),
-            _ => Err(TypeError {
-                message: format!("Lambda return type of {} is not a Type", self),
-            }),
-        }
-    }
+    // pub fn call_lambda(&self, arg_types: &[Type]) -> Result<Type, TypeError> {
+    //     if self.name != "Lambda" {
+    //         return Err(TypeError {
+    //             message: format!("Type {} is not a Lambda", self),
+    //         });
+    //     }
+    //     if self.type_args.is_empty() {
+    //         return Err(TypeError {
+    //             message: format!("Lambda type {} has no type arguments", self),
+    //         });
+    //     }
+    //     if self.type_args.len() != arg_types.len() + 1 {
+    //         return Err(TypeError {
+    //             message: format!(
+    //                 "Lambda type {} expects {} arguments, got {}",
+    //                 self,
+    //                 self.type_args.len() - 1,
+    //                 arg_types.len()
+    //             ),
+    //         });
+    //     }
+    //     for (i, arg_type) in arg_types.iter().enumerate() {
+    //         match &self.type_args[i] {
+    //             TypeArg::Type(t) => {
+    //                 if !arg_type.is_subtype_of(t) {
+    //                     return Err(TypeError {
+    //                         message: format!(
+    //                             "Lambda argument type mismatch: expected {}, got {}",
+    //                             t, arg_type
+    //                         ),
+    //                     });
+    //                 }
+    //             }
+    //             _ => {
+    //                 return Err(TypeError {
+    //                     message: format!("Lambda argument type {} is not a Type", self),
+    //                 });
+    //             }
+    //         }
+    //     }
+    //     match &self.type_args[self.type_args.len() - 1] {
+    //         TypeArg::Type(t) => Ok(t.clone()),
+    //         _ => Err(TypeError {
+    //             message: format!("Lambda return type of {} is not a Type", self),
+    //         }),
+    //     }
+    // }
 
     // pub fn two_bounds_args(&self) -> Result<(Bound, Bound), TypeError> {
     //     if self.type_args.len() != 2 {
@@ -126,27 +127,12 @@ impl Expr {
                 }
             }
             Expr::FunctionCall { name, args } => {
-                let overloaded = env
-                    .functions
-                    .get(name)
-                    .ok_or(TypeError {
-                        message: format!("Undefined function: {}", name),
-                    })?
-                    .clone();
+                let funcdef = env.get_function(name)?;
                 let targs = args
                     .iter()
                     .map(|a| a.type_check(env))
                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
-                let concrete_overloaded = overloaded.instantiate_from_types(
-                    &targs.iter().map(|a| a.typ()).collect::<Vec<Type>>(),
-                )?;
-
-                Ok(TExpr::FunctionCall {
-                    name: name.to_owned(),
-                    args: targs,
-                    return_type: concrete_overloaded.return_type.clone(),
-                    optimizations: concrete_overloaded.optimizations.clone(),
-                })
+                funcdef.make_func_call(&targs)
             }
             Expr::Semicolon(stmt, expr) => {
                 let tstmt = stmt.type_check(env)?;
@@ -304,6 +290,17 @@ impl TFuncAttribute {
     }
 }
 
+impl TEnv {
+    fn get_function(&self, name: &str) -> Result<TFuncDef, TypeError> {
+        if let Some(b) = lookup_builtin(name) {
+            return Ok(b);
+        }
+        self.functions.get(name).cloned().ok_or(TypeError {
+            message: format!("Function {} not found in environment", name),
+        })
+    }
+}
+
 impl FuncDef {
     fn decl(&self) -> Result<TFuncDef, TypeError> {
         let mut arg_types = vec![];
@@ -317,14 +314,7 @@ impl FuncDef {
     fn type_check(&self, env: &mut TEnv) -> Result<TFuncDef, TypeError> {
         let mut local_env = env.clone();
         let decl = &env
-            .functions
-            .get(&self.name)
-            .ok_or(TypeError {
-                message: format!(
-                    "Function {} not found in environment during type checking",
-                    self.name
-                ),
-            })?;
+            .get_function(&self.name)?;
         assert!(decl.args.len() == self.args.len());
         for (a, a2) in self.args.iter().zip(&decl.args) {
             if local_env.variables.contains_key(&a.name) {
@@ -410,7 +400,7 @@ impl SourceFile {
     pub fn type_check(&self) -> Result<TSourceFile, TypeError> {
         let mut env = TEnv {
             variables: HashMap::new(),
-            functions: builtins(),
+            functions: HashMap::new(),
         };
 
         for func in &self.functions {

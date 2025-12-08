@@ -1,4 +1,5 @@
 use std::{collections::HashMap, slice::from_ref};
+// don't use std::ops::Ops here to avoid circular dependencies
 
 use crate::{
     check::{
@@ -7,6 +8,10 @@ use crate::{
     },
     syntax::ast::{Arg, Type, TypeArg},
 };
+
+thread_local! {
+    static BUILTIN_FUNCTIONS: HashMap<String, TFuncDef> = builtins();
+}
 
 fn insert_multiple(
     map: &mut HashMap<String, TFuncDef>,
@@ -44,7 +49,17 @@ fn args1(t0: &Type) -> Vec<Arg> {
     }]
 }
 
-pub fn builtins() -> HashMap<String, TFuncDef> {
+pub fn known_builtin(name: &'static str) -> TFuncDef {
+    lookup_builtin(name)
+        .expect(&format!("Builtin function {} not found", name))
+}
+
+pub fn lookup_builtin(name: &str) -> Option<TFuncDef> {
+    BUILTIN_FUNCTIONS.with(|builtins| builtins.get(name).cloned())
+}
+
+fn builtins() -> HashMap<String, TFuncDef> {
+    // Don't call ops.rs directly here, or we'll end up with infinite recursion
     let mut functions = HashMap::new();
     let tu32 = Type::basic("u32");
     let tu64 = Type::basic("u64");
@@ -67,11 +82,10 @@ pub fn builtins() -> HashMap<String, TFuncDef> {
         type_args: vec![TypeArg::Type(uparam.clone())],
     };
 
-    insert_multiple(
-        &mut functions,
-        &["==", "!="],
-        TFuncDef::psimple("", &[tparam.clone(), tparam.clone()], &tbool, &["T"]),
-    );
+    let eq = TFuncDef::psimple("==", &[tparam.clone(), tparam.clone()], &tbool, &["T"]);
+    let ne = TFuncDef::psimple("!=", &[tparam.clone(), tparam.clone()], &tbool, &["T"]);
+    functions.insert("==".to_owned(), eq.clone());
+    functions.insert("!=".to_owned(), ne.clone());
 
     insert_multiple(
         &mut functions,
@@ -172,7 +186,7 @@ pub fn builtins() -> HashMap<String, TFuncDef> {
                         preconditions: vec![],
                     },
                 ],
-                preconditions: vec![tint.var("arg1").ne(&TExpr::zero()).unwrap()],
+                preconditions: vec![ne.make_func_call(&[tint.var("arg1"), TExpr::zero()]).unwrap()],
                 attributes: vec![],
                 name: symbol.to_owned(),
                 return_name: "__ret__".to_owned(),

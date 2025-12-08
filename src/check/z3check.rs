@@ -8,10 +8,7 @@ use std::{
 
 use crate::{
     check::{
-        builtins,
-        optimization_chooser::OptimizationError,
-        ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt},
-        ztype_inference::TypeError,
+        builtins::lookup_builtin, optimization_chooser::OptimizationError, ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt}, ztype_inference::TypeError
     },
     syntax::ast::*,
 };
@@ -72,7 +69,6 @@ struct Env {
     vars: HashMap<String, CheckedVar>,
     assumptions: Vec<z3::ast::Bool>,
     side_effects: HashSet<String>,
-    builtins: HashMap<String, TFuncDef>,
     other_funcs: Vec<TFuncDef>,
     verbosity: u8,
     type_param_list: Vec<String>,
@@ -245,7 +241,6 @@ impl Env {
             vars: HashMap::new(),
             assumptions: Vec::new(),
             side_effects: HashSet::new(),
-            builtins: builtins::builtins(),
             other_funcs: other_funcs.to_owned(),
             verbosity,
             type_param_list: Vec::new(),
@@ -655,8 +650,8 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
 
 impl Env {
     fn get_overloaded_func(&self, name: &str) -> Result<TFuncDef, CheckError> {
-        if self.builtins.contains_key(name) {
-            Ok(self.builtins.get(name).unwrap().clone())
+        if let Some(b) = lookup_builtin(name) {
+            Ok(b)
         } else {
             self.other_funcs
                 .iter()
