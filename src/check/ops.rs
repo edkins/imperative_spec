@@ -16,6 +16,10 @@ pub fn big_and(exprs: &[TExpr]) -> Result<TExpr, TypeError> {
 }
 
 impl TExpr {
+    pub fn zero() -> TExpr {
+        TExpr::Literal(Literal::U64(0))
+    }
+
     pub fn eq(&self, other: &TExpr) -> Result<TExpr, TypeError> {
         if !self.typ().compatible_with(&other.typ()) {
             return Err(TypeError {
@@ -30,7 +34,25 @@ impl TExpr {
             name: "==".to_owned(),
             args: vec![self.clone(), other.clone()],
             return_type: Type::basic("bool"),
-            optimizations: vec![], // TODO: add optimizations for eq?
+            optimizations: vec![], // TODO: add optimizations for eq and ne?
+        })
+    }
+
+    pub fn ne(&self, other: &TExpr) -> Result<TExpr, TypeError> {
+        if !self.typ().compatible_with(&other.typ()) {
+            return Err(TypeError {
+                message: format!(
+                    "Cannot compare inequality of incompatible types {} and {}",
+                    self.typ(),
+                    other.typ()
+                ),
+            });
+        }
+        Ok(TExpr::FunctionCall {
+            name: "!=".to_owned(),
+            args: vec![self.clone(), other.clone()],
+            return_type: Type::basic("bool"),
+            optimizations: vec![],
         })
     }
 

@@ -1,0 +1,9 @@
+#[check_decisions(z64_add, u64_mod)]
+fn my_func(x: u32, y: u32) -> u32
+{
+    (x + y) % 5
+}
+
+fn main() {
+    my_func(2,3);
+}

@@ -327,14 +327,16 @@ impl FuncDef {
                 ),
             })?
             .extract_single()?;
-        assert!(decl.arg_types.len() == self.args.len());
-        for (a, t) in self.args.iter().zip(&decl.arg_types) {
+        assert!(decl.args.len() == self.args.len());
+        for (a, a2) in self.args.iter().zip(&decl.args) {
             if local_env.variables.contains_key(&a.name) {
                 return Err(TypeError {
                     message: format!("Duplicate argument name: {}", a.name),
                 });
             }
-            local_env.variables.insert(a.name.clone(), t.clone());
+            local_env
+                .variables
+                .insert(a.name.clone(), a2.arg_type.clone());
         }
         let args_env = local_env.clone();
         let tbody = self.body.type_check(&mut local_env)?;
@@ -373,10 +375,10 @@ impl FuncDef {
         let args = self
             .args
             .iter()
-            .zip(&decl.arg_types)
-            .map(|(a, t)| Arg {
+            .zip(&decl.args)
+            .map(|(a, a2)| Arg {
                 name: a.name.clone(),
-                arg_type: t.clone(),
+                arg_type: a2.arg_type.clone(),
             })
             .collect::<Vec<_>>();
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     check::{
-        overloads::ConcreteOptimization,
+        overloads::Optimization,
         ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt},
     },
     syntax::ast::{Literal, Type},
@@ -105,8 +105,8 @@ impl TypeExpectations {
     fn decide_optimization(
         &self,
         established_type: &Type,
-        optims: &[ConcreteOptimization],
-    ) -> Option<ConcreteOptimization> {
+        optims: &[Optimization],
+    ) -> Option<Optimization> {
         // println!(
         //     "Deciding optimization out of {:?} for established type {} with expectations {}",
         //     optims.iter().map(|o| o.debug_name.clone()).collect::<Vec<String>>(),
@@ -114,7 +114,7 @@ impl TypeExpectations {
         //     self
         // );
         for optim in optims {
-            if self.enough_to_get_from(established_type, &optim.func.return_type) {
+            if self.enough_to_get_from(established_type, &optim.return_type) {
                 return Some(optim.clone());
             }
         }
@@ -176,17 +176,17 @@ impl TExpr {
                 // println!("Choosing optimization for function call {} with expectations {}", name, expectations);
                 if let Some(optim) = expectations.decide_optimization(return_type, optimizations) {
                     env.decisions.push(optim.debug_name.clone());
-                    assert!(optim.func.arg_types.len() == args.len());
+                    assert!(optim.arg_types.len() == args.len());
                     TExpr::FunctionCall {
                         name: name.clone(),
                         args: args
                             .iter()
-                            .zip(optim.func.arg_types.iter())
+                            .zip(optim.arg_types.iter())
                             .map(|(arg, expected_type)| {
                                 arg.choose_optimization(env, &TypeExpectations::new(expected_type))
                             })
                             .collect(),
-                        return_type: optim.func.return_type.clone(),
+                        return_type: optim.return_type.clone(),
                         optimizations: vec![optim],
                     }
                 } else {

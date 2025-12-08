@@ -39,6 +39,7 @@ enum Symbol {
     Plus,
     Minus,
     Star,
+    Slash,
     EqualEqual,
     NotEqual,
     PlusAssign,
@@ -51,6 +52,7 @@ enum Symbol {
     LogicalAnd,
     LogicalOr,
     Hash,
+    Percent,
 }
 
 fn pure_whitespace1(input: &str) -> IResult<&str, &str> {
@@ -192,7 +194,7 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
 fn is_multi_char_sym(ch: char) -> bool {
     matches!(
         ch,
-        ':' | '=' | '+' | '-' | '*' | '<' | '>' | '!' | '&' | '|' | '#'
+        ':' | '=' | '+' | '-' | '*' | '<' | '>' | '!' | '&' | '|' | '#' | '%' | '/'
     )
 }
 
@@ -217,6 +219,8 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "&&" => Ok((input, Symbol::LogicalAnd)),
         "||" => Ok((input, Symbol::LogicalOr)),
         "#" => Ok((input, Symbol::Hash)),
+        "%" => Ok((input, Symbol::Percent)),
+        "/" => Ok((input, Symbol::Slash)),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Char,
@@ -361,8 +365,31 @@ fn expr_tight(input: &str) -> IResult<&str, Expr> {
     .parse(input)
 }
 
+fn expr_prefixed(input: &str) -> IResult<&str, Expr> {
+    alt((
+        preceded(
+            symbol(Symbol::Minus),
+            map(expr_prefixed, |e| Expr::FunctionCall {
+                name: "neg".to_owned(),
+                args: vec![e],
+            }),
+        ),
+        expr_tight,
+    ))
+    .parse(input)
+}
+
 fn plusminus(input: &str) -> IResult<&str, Symbol> {
     alt((symbol(Symbol::Plus), symbol(Symbol::Minus))).parse(input)
+}
+
+fn timesdividemod(input: &str) -> IResult<&str, Symbol> {
+    alt((
+        symbol(Symbol::Star),
+        symbol(Symbol::Slash),
+        symbol(Symbol::Percent),
+    ))
+    .parse(input)
 }
 
 fn cmpop(input: &str) -> IResult<&str, Symbol> {
@@ -377,17 +404,31 @@ fn cmpop(input: &str) -> IResult<&str, Symbol> {
     .parse(input)
 }
 
-fn expr_times(input: &str) -> IResult<&str, Expr> {
-    let (input, mut exprs) = expr_tight(input)?;
+fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
+    let (input, mut exprs) = expr_prefixed(input)?;
     let mut inp = input;
     loop {
-        let (input, op) = opt(pair(symbol(Symbol::Star), expr_tight)).parse(inp)?;
+        let (input, op) = opt(pair(timesdividemod, expr_prefixed)).parse(inp)?;
         inp = input;
 
         match op {
             Some((Symbol::Star, rhs)) => {
                 let new_expr = Expr::FunctionCall {
                     name: "*".to_owned(),
+                    args: vec![exprs.clone(), rhs],
+                };
+                exprs = new_expr;
+            }
+            Some((Symbol::Slash, rhs)) => {
+                let new_expr = Expr::FunctionCall {
+                    name: "/".to_owned(),
+                    args: vec![exprs.clone(), rhs],
+                };
+                exprs = new_expr;
+            }
+            Some((Symbol::Percent, rhs)) => {
+                let new_expr = Expr::FunctionCall {
+                    name: "%".to_owned(),
                     args: vec![exprs.clone(), rhs],
                 };
                 exprs = new_expr;
@@ -400,10 +441,10 @@ fn expr_times(input: &str) -> IResult<&str, Expr> {
 }
 
 fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
-    let (input, mut exprs) = expr_times(input)?;
+    let (input, mut exprs) = expr_times_divide_mod(input)?;
     let mut inp = input;
     loop {
-        let (input, op) = opt(pair(plusminus, expr_times)).parse(inp)?;
+        let (input, op) = opt(pair(plusminus, expr_times_divide_mod)).parse(inp)?;
         inp = input;
 
         match op {

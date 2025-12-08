@@ -1,72 +1,82 @@
 use std::collections::HashMap;
 
 use crate::{
-    check::{parameterized::ParameterizedType, ztype_ast::TExpr, ztype_inference::TypeError},
-    syntax::ast::Type,
+    check::{ztype_ast::TExpr, ztype_inference::TypeError},
+    syntax::ast::{Arg, Type},
 };
+
+// #[derive(Clone)]
+// pub struct ParameterizedArg {
+//     pub name: String,
+//     pub typ: ParameterizedType,
+// }
 
 #[derive(Clone)]
 pub struct TFunc {
-    pub arg_types: Vec<ParameterizedType>,
-    pub return_type: ParameterizedType,
+    pub args: Vec<Arg>,
+    pub return_type: Type,
+    pub type_param_list: Vec<String>,
 }
 
-#[derive(Clone)]
-pub struct TConcreteFunc {
-    pub arg_types: Vec<Type>,
-    pub return_type: Type,
-}
+// #[derive(Clone)]
+// pub struct TConcreteFunc {
+//     pub arg_types: Vec<Type>,
+//     pub return_type: Type,
+// }
 
 #[derive(Clone)]
 pub struct Optimization {
     pub debug_name: String,
-    pub func: TFunc,
+    pub arg_types: Vec<Type>,
+    pub return_type: Type,
+    pub preconditions: Vec<TExpr>,
 }
 
-#[derive(Clone)]
-pub struct ConcreteOptimization {
-    pub debug_name: String,
-    pub func: TConcreteFunc,
-}
+// #[derive(Clone)]
+// pub struct ConcreteOptimization {
+//     pub debug_name: String,
+//     pub func: TConcreteFunc,
+// }
 
 #[derive(Clone)]
 pub struct TOverloadedFunc {
     pub headline: TFunc,
     pub optimizations: Vec<Optimization>,
+    pub preconditions: Vec<TExpr>,
 }
 
-#[derive(Clone)]
-pub struct TConcreteOverloadedFunc {
-    pub headline: TConcreteFunc,
-    pub optimizations: Vec<ConcreteOptimization>,
-}
+// #[derive(Clone)]
+// pub struct TConcreteOverloadedFunc {
+//     pub headline: TConcreteFunc,
+//     pub optimizations: Vec<ConcreteOptimization>,
+// }
 
-impl std::fmt::Display for ConcreteOptimization {
+impl std::fmt::Display for Optimization {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "{}: ({}) -> {}",
             self.debug_name,
-            self.func
-                .arg_types
+            self.arg_types
                 .iter()
                 .map(|t| t.to_string())
                 .collect::<Vec<String>>()
                 .join(", "),
-            self.func.return_type
+            self.return_type
         )
     }
 }
 
-impl ConcreteOptimization {
+impl Optimization {
     pub fn assumptions_when_applying(
         &self,
         args: &[Type],
         exprs: &[TExpr],
+        type_param_list: &[String],
     ) -> Result<Vec<TExpr>, TypeError> {
         assert!(args.len() == exprs.len());
         let mut type_preconditions = vec![];
-        for ((arg_type, expr), param_type) in args.iter().zip(exprs).zip(&self.func.arg_types) {
+        for ((arg_type, expr), param_type) in args.iter().zip(exprs).zip(&self.arg_types) {
             if !arg_type.compatible_with(param_type) {
                 return Err(TypeError {
                     message: format!(
@@ -75,79 +85,103 @@ impl ConcreteOptimization {
                     ),
                 });
             }
-            type_preconditions.extend_from_slice(&param_type.type_assertions(expr.clone())?);
+            type_preconditions
+                .extend_from_slice(&param_type.type_assertions(expr.clone(), type_param_list)?);
         }
         Ok(type_preconditions)
     }
+
+    pub fn instantiate(&self, mapping: &HashMap<String, Type>) -> Result<Optimization, TypeError> {
+        Ok(Optimization {
+            debug_name: self.debug_name.clone(),
+            arg_types: self
+                .arg_types
+                .iter()
+                .map(|t| t.instantiate(mapping))
+                .collect::<Result<Vec<Type>, TypeError>>()?,
+            return_type: self.return_type.instantiate(mapping)?,
+            preconditions: self
+                .preconditions
+                .iter()
+                .map(|e| e.instantiate(mapping))
+                .collect::<Result<Vec<TExpr>, TypeError>>()?,
+        })
+    }
 }
 
-impl Optimization {
-    pub fn instantiate(
-        &self,
-        mapping: &HashMap<String, Type>,
-    ) -> Result<ConcreteOptimization, TypeError> {
-        Ok(ConcreteOptimization {
-            debug_name: self.debug_name.clone(),
-            func: TConcreteFunc {
-                arg_types: self
-                    .func
-                    .arg_types
-                    .iter()
-                    .map(|t| t.instantiate(mapping))
-                    .collect::<Result<Vec<Type>, TypeError>>()?,
-                return_type: self.func.return_type.instantiate(mapping)?,
-            },
-        })
+impl TFunc {
+    pub fn psimple(arg_types: &[Type], return_type: &Type, type_param_list: &[&str]) -> Self {
+        let args = arg_types
+            .iter()
+            .enumerate()
+            .map(|(i, t)| Arg {
+                name: format!("arg{}", i),
+                arg_type: t.clone(),
+            })
+            .collect::<Vec<Arg>>();
+        TFunc {
+            args,
+            return_type: return_type.clone(),
+            type_param_list: type_param_list.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+impl std::fmt::Display for TOverloadedFunc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "fn({}) -> {}",
+            self.headline
+                .args
+                .iter()
+                .map(|arg| arg.arg_type.to_string())
+                .collect::<Vec<String>>()
+                .join(", "),
+            self.headline.return_type
+        )
     }
 }
 
 impl TOverloadedFunc {
     pub fn simple(arg_types: &[Type], return_type: &Type) -> Self {
-        let arg_types = arg_types
-            .iter()
-            .map(ParameterizedType::from_type)
-            .collect::<Vec<ParameterizedType>>();
-        let return_type = ParameterizedType::from_type(return_type);
+        TOverloadedFunc::psimple(arg_types, return_type, &[])
+    }
+
+    pub fn psimple(arg_types: &[Type], return_type: &Type, type_param_list: &[&str]) -> Self {
         TOverloadedFunc {
-            headline: TFunc {
-                arg_types,
-                return_type,
-            },
+            headline: TFunc::psimple(arg_types, return_type, type_param_list),
             optimizations: vec![],
+            preconditions: vec![],
         }
     }
 
-    pub fn psimple(arg_types: &[ParameterizedType], return_type: &ParameterizedType) -> Self {
-        TOverloadedFunc {
-            headline: TFunc {
-                arg_types: arg_types.to_vec(),
-                return_type: return_type.clone(),
-            },
-            optimizations: vec![],
-        }
-    }
-
-    pub fn instantiate_from_types(
-        &self,
-        arg_types: &[Type],
-    ) -> Result<TConcreteOverloadedFunc, TypeError> {
+    pub fn instantiate_from_types(&self, arg_types: &[Type]) -> Result<TOverloadedFunc, TypeError> {
         let headline = &self.headline;
-        if headline.arg_types.len() != arg_types.len() {
+        if headline.args.len() != arg_types.len() {
             return Err(TypeError {
                 message: format!(
                     "Wrong number of arguments: expected {}, got {}",
-                    headline.arg_types.len(),
+                    headline.args.len(),
                     arg_types.len()
                 ),
             });
         }
         let mut compatible = true;
         let mut mapping = HashMap::new();
-        for (arg_type, param_type) in arg_types.iter().zip(&headline.arg_types) {
-            param_type.unify(arg_type, &mut mapping)?;
+        for (arg_type, arg) in arg_types.iter().zip(&headline.args) {
+            arg.arg_type
+                .unify(arg_type, &mut mapping, &headline.type_param_list)?;
         }
-        for (arg_type, param_type) in arg_types.iter().zip(&headline.arg_types) {
-            if !arg_type.compatible_with(&param_type.instantiate(&mapping)?) {
+        for param in &headline.type_param_list {
+            if !mapping.contains_key(param) {
+                return Err(TypeError {
+                    message: format!("Type parameter {} not mapped during unification", param),
+                });
+            }
+        }
+        for (arg_type, arg) in arg_types.iter().zip(&headline.args) {
+            if !arg_type.compatible_with(&arg.arg_type.instantiate(&mapping)?) {
                 compatible = false;
                 break;
             }
@@ -170,34 +204,42 @@ impl TOverloadedFunc {
     pub fn instantiate(
         &self,
         mapping: &HashMap<String, Type>,
-    ) -> Result<TConcreteOverloadedFunc, TypeError> {
-        Ok(TConcreteOverloadedFunc {
-            headline: TConcreteFunc {
-                arg_types: self
+    ) -> Result<TOverloadedFunc, TypeError> {
+        Ok(TOverloadedFunc {
+            headline: TFunc {
+                args: self
                     .headline
-                    .arg_types
+                    .args
                     .iter()
                     .map(|t| t.instantiate(mapping))
-                    .collect::<Result<Vec<Type>, TypeError>>()?,
+                    .collect::<Result<Vec<Arg>, TypeError>>()?,
                 return_type: self.headline.return_type.instantiate(mapping)?,
+                type_param_list: vec![],
             },
             optimizations: self
                 .optimizations
                 .iter()
                 .map(|opt| opt.instantiate(mapping))
-                .collect::<Result<Vec<ConcreteOptimization>, TypeError>>()?,
+                .collect::<Result<Vec<Optimization>, TypeError>>()?,
+            preconditions: self
+                .preconditions
+                .iter()
+                .map(|e| e.instantiate(mapping))
+                .collect::<Result<Vec<TExpr>, TypeError>>()?,
         })
     }
 
-    pub fn extract_single(&self) -> Result<TConcreteFunc, TypeError> {
-        Ok(TConcreteFunc {
-            arg_types: self
-                .headline
-                .arg_types
-                .iter()
-                .map(|t| t.to_type())
-                .collect::<Result<Vec<Type>, TypeError>>()?,
-            return_type: self.headline.return_type.to_type()?,
+    pub fn extract_single(&self) -> Result<TFunc, TypeError> {
+        if !self.headline.type_param_list.is_empty() {
+            return Err(TypeError {
+                message: "Cannot extract single function from parameterized overloaded function"
+                    .to_owned(),
+            });
+        }
+        Ok(TFunc {
+            args: self.headline.args.clone(),
+            return_type: self.headline.return_type.clone(),
+            type_param_list: vec![],
         })
     }
 
@@ -239,26 +281,30 @@ impl TOverloadedFunc {
     // }
 }
 
-impl TConcreteOverloadedFunc {
+impl TOverloadedFunc {
     pub fn lookup_type_preconditions(&self, args: &[TExpr]) -> Result<Vec<TExpr>, TypeError> {
         let headline = &self.headline;
-        if headline.arg_types.len() != args.len() {
+        if headline.args.len() != args.len() {
             return Err(TypeError {
                 message: format!(
                     "Wrong number of arguments: expected {}, got {}",
-                    headline.arg_types.len(),
+                    headline.args.len(),
                     args.len()
                 ),
             });
         }
         let mut compatible = true;
         let mut type_preconditions = vec![];
-        for (arg, param_type) in args.iter().zip(&headline.arg_types) {
-            if !arg.typ().compatible_with(param_type) {
+        for (arg, param) in args.iter().zip(&headline.args) {
+            if !arg.typ().compatible_with(&param.arg_type) {
                 compatible = false;
                 break;
             }
-            type_preconditions.extend_from_slice(&param_type.type_assertions(arg.clone())?);
+            type_preconditions.extend_from_slice(
+                &param
+                    .arg_type
+                    .type_assertions(arg.clone(), &headline.type_param_list)?,
+            );
         }
         if compatible {
             return Ok(type_preconditions);

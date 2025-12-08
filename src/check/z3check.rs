@@ -10,7 +10,7 @@ use crate::{
     check::{
         builtins,
         optimization_chooser::OptimizationError,
-        overloads::{TConcreteOverloadedFunc, TOverloadedFunc},
+        overloads::TOverloadedFunc,
         ztype_ast::{TExpr, TFuncDef, TStmt},
         ztype_inference::TypeError,
     },
@@ -87,6 +87,7 @@ struct Env {
     builtins: HashMap<String, TOverloadedFunc>,
     other_funcs: Vec<CheckedFunction>,
     verbosity: u8,
+    type_param_list: Vec<String>,
 }
 
 impl CheckedFunction {
@@ -227,6 +228,7 @@ impl Env {
             builtins: builtins::builtins(),
             other_funcs: other_funcs_visible,
             verbosity,
+            type_param_list: Vec::new(),
         }
     }
 
@@ -367,10 +369,13 @@ impl Env {
         }
         info.mutate();
         let new_var = info.z3_const()?;
-        let conds = info.var_type.type_assertions(TExpr::Variable {
-            name: var.to_owned(),
-            typ: info.var_type.clone(),
-        })?;
+        let conds = info.var_type.type_assertions(
+            TExpr::Variable {
+                name: var.to_owned(),
+                typ: info.var_type.clone(),
+            },
+            &self.type_param_list,
+        )?;
         self.assume(new_var.safe_eq(&value)?);
         self.assert_exprs(&conds, "Type assertion failed in assignment")
     }
@@ -466,10 +471,13 @@ impl TStmt {
                 env.assume(z3_var.safe_eq(&z3_value)?);
                 // check the type
                 env.assert_exprs(
-                    &typ.type_assertions(TExpr::Variable {
-                        name: name.clone(),
-                        typ: typ.clone(),
-                    })?,
+                    &typ.type_assertions(
+                        TExpr::Variable {
+                            name: name.clone(),
+                            typ: typ.clone(),
+                        },
+                        &env.type_param_list,
+                    )?,
                     "Type assertion failed in let",
                 )?;
                 Ok(TStmt::Let {
@@ -532,6 +540,8 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
         ("+", 2) => Ok((int(&args[0])? + int(&args[1])?).into()),
         ("-", 2) => Ok((int(&args[0])? - int(&args[1])?).into()),
         ("*", 2) => Ok((int(&args[0])? * int(&args[1])?).into()),
+        ("%", 2) => Ok((int(&args[0])? % int(&args[1])?).into()),
+        ("/", 2) => Ok((int(&args[0])? / int(&args[1])?).into()),
         ("&&", 2) => Ok((boolean(&args[0])? & boolean(&args[1])?).into()),
         ("||", 2) => Ok((boolean(&args[0])? | boolean(&args[1])?).into()),
         ("assert", 1) => {
@@ -601,6 +611,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
                         name: user_func.return_value.clone(),
                         typ: user_func.return_type.clone(),
                     },
+                    &call_env.type_param_list,
                 )?)?;
                 // don't forget the side effects
                 for effect in &user_func.side_effects {
@@ -657,13 +668,14 @@ impl Env {
         &mut self,
         func: &TOverloadedFunc,
         exprs: &[TExpr],
-    ) -> Result<TConcreteOverloadedFunc, CheckError> {
+    ) -> Result<TOverloadedFunc, CheckError> {
         let arg_types = exprs.iter().map(|e| e.typ()).collect::<Vec<Type>>();
         let func = func.instantiate_from_types(&arg_types)?;
         assert!(arg_types.len() == exprs.len());
         let mut optimizations = vec![];
         for opt in &func.optimizations {
-            let assumptions = opt.assumptions_when_applying(&arg_types, exprs)?;
+            let assumptions =
+                opt.assumptions_when_applying(&arg_types, exprs, &func.headline.type_param_list)?;
             let mut ok = true;
             for assumption in assumptions {
                 let cond_z3_value = assumption.z3_check(self)?.0;
@@ -676,9 +688,10 @@ impl Env {
                 optimizations.push(opt.clone());
             }
         }
-        Ok(TConcreteOverloadedFunc {
+        Ok(TOverloadedFunc {
             headline: func.headline.clone(),
             optimizations,
+            preconditions: func.preconditions.clone(),
         })
     }
 }
@@ -804,11 +817,18 @@ fn z3_check_funcdef(
     let mut env = Env::new(other_funcs, &func.sees, verbosity);
     for arg in &func.args {
         env.insert_var(&arg.name, false, &arg.arg_type)?;
+        assert!(
+            env.type_param_list.is_empty(),
+            "Type parameters not supported in z3 check yet"
+        );
         // assume the type assertions on the argument
-        env.assume_exprs(&arg.arg_type.type_assertions(TExpr::Variable {
-            name: arg.name.clone(),
-            typ: arg.arg_type.clone(),
-        })?)?;
+        env.assume_exprs(&arg.arg_type.type_assertions(
+            TExpr::Variable {
+                name: arg.name.clone(),
+                typ: arg.arg_type.clone(),
+            },
+            &env.type_param_list,
+        )?)?;
     }
     env.assume_exprs(&func.preconditions)?;
     let (body_z3_value, new_body) = func.body.z3_check(&mut env)?;
@@ -819,10 +839,13 @@ fn z3_check_funcdef(
 
     // check return type
     env.assert_exprs(
-        &func.return_type.type_assertions(TExpr::Variable {
-            name: func.return_name.clone(),
-            typ: func.return_type.clone(),
-        })?,
+        &func.return_type.type_assertions(
+            TExpr::Variable {
+                name: func.return_name.clone(),
+                typ: func.return_type.clone(),
+            },
+            &env.type_param_list,
+        )?,
         "Type assertion failed on return",
     )?;
 

@@ -1,5 +1,5 @@
 use crate::{
-    check::overloads::ConcreteOptimization,
+    check::overloads::Optimization,
     syntax::ast::{Arg, Literal, Type, TypeArg},
 };
 
@@ -24,7 +24,7 @@ pub enum TExpr {
         name: String,
         args: Vec<TExpr>,
         return_type: Type,
-        optimizations: Vec<ConcreteOptimization>,
+        optimizations: Vec<Optimization>,
     },
     Sequence {
         elements: Vec<TExpr>,

@@ -28,17 +28,38 @@ impl Type {
     //     self.type_assertions(expr)
     // }
 
-    pub fn most_general_type(&self) -> Type {
-        if self.is_int() {
-            Type::basic("int")
+    pub fn var(&self, name: &str) -> TExpr {
+        TExpr::Variable {
+            name: name.to_owned(),
+            typ: self.clone(),
+        }
+    }
+
+    pub fn most_general_type(&self, param_list: &[String]) -> Result<Type, TypeError> {
+        if param_list.contains(&self.name) {
+            if self.type_args.is_empty() {
+                Ok(Type {
+                    name: self.name.clone(),
+                    type_args: vec![],
+                })
+            } else {
+                Err(TypeError {
+                    message: format!(
+                        "Cannot generalize parameterized type {} with parameters",
+                        self
+                    ),
+                })
+            }
+        } else if self.is_int() {
+            Ok(Type::basic("int"))
         } else if let Some(elem) = self.get_named_seq() {
-            let general_elem = elem.most_general_type();
-            Type {
+            let general_elem = elem.most_general_type(param_list)?;
+            Ok(Type {
                 name: "Seq".to_owned(),
                 type_args: vec![TypeArg::Type(general_elem)],
-            }
+            })
         } else {
-            self.clone()
+            Ok(self.clone())
         }
     }
 
@@ -69,7 +90,11 @@ impl Type {
         false
     }
 
-    pub fn type_assertions(&self, expr: TExpr) -> Result<Vec<TExpr>, TypeError> {
+    pub fn type_assertions(
+        &self,
+        expr: TExpr,
+        param_list: &[String],
+    ) -> Result<Vec<TExpr>, TypeError> {
         match self.name.as_str() {
             "int" | "nat" | "z8" | "z16" | "z32" | "z64" | "i8" | "i16" | "i32" | "i64" | "u8"
             | "u16" | "u32" | "u64" => {
@@ -78,7 +103,9 @@ impl Type {
             }
             "Seq" | "Vec" => {
                 if let &[TypeArg::Type(elem_type)] = &self.type_args.as_slice() {
-                    if let Some(lambda) = elem_type.type_lambda(&elem_type.most_general_type())? {
+                    if let Some(lambda) = elem_type
+                        .type_lambda(&elem_type.most_general_type(param_list)?, param_list)?
+                    {
                         Ok(vec![expr.seq_all(&lambda)?])
                     } else {
                         Ok(vec![])
@@ -98,7 +125,9 @@ impl Type {
                 {
                     let size_expr = array_size.as_expr()?;
                     let mut conds = vec![expr.seq_len()?.eq(&size_expr)?];
-                    if let Some(lambda) = elem_type.type_lambda(&elem_type.most_general_type())? {
+                    if let Some(lambda) = elem_type
+                        .type_lambda(&elem_type.most_general_type(param_list)?, param_list)?
+                    {
                         conds.push(expr.seq_all(&lambda)?);
                     }
                     Ok(conds)
@@ -245,7 +274,11 @@ impl Type {
         false
     }
 
-    fn type_lambda(&self, more_general_type: &Type) -> Result<Option<TExpr>, TypeError> {
+    fn type_lambda(
+        &self,
+        more_general_type: &Type,
+        param_list: &[String],
+    ) -> Result<Option<TExpr>, TypeError> {
         assert!(
             self.is_subtype_of(more_general_type),
             "Type {} is not a subtype of {}",
@@ -256,7 +289,7 @@ impl Type {
             name: "__item__".to_owned(),
             typ: more_general_type.clone(),
         };
-        let conds = self.type_assertions(var)?;
+        let conds = self.type_assertions(var, param_list)?;
         if conds.is_empty() {
             return Ok(None);
         }
