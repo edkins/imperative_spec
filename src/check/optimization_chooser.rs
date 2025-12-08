@@ -12,6 +12,7 @@ use crate::{
 struct CEnv {
     uses: HashMap<String, TypeExpectations>,
     decisions: Vec<String>,
+    verbosity: u8,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -173,9 +174,14 @@ impl TExpr {
                 return_type,
                 optimizations,
             } => {
-                // println!("Choosing optimization for function call {} with expectations {}", name, expectations);
+                if env.verbosity >= 2 {
+                    println!(
+                        "Choosing optimization for function call {} with expectations {}, available optimizations {:?}",
+                        name, expectations, optimizations.iter().map(|o| o.debug_name.clone()).collect::<Vec<String>>()
+                    );
+                }
                 if let Some(optim) = expectations.decide_optimization(return_type, optimizations) {
-                    env.decisions.push(optim.debug_name.clone());
+                    env.decisions.insert(0, optim.debug_name.clone());  // insert at beginning since we're going backwards
                     assert!(optim.arg_types.len() == args.len());
                     TExpr::FunctionCall {
                         name: name.clone(),
@@ -274,8 +280,9 @@ impl TStmt {
 }
 
 impl TFuncDef {
-    pub fn choose_optimization(&self) -> Result<TFuncDef, OptimizationError> {
+    pub fn choose_optimization(&self, verbosity: u8) -> Result<TFuncDef, OptimizationError> {
         let mut env = CEnv::default();
+        env.verbosity = verbosity;
         let body = self
             .body
             .choose_optimization(&mut env, &TypeExpectations::new(&self.return_type));
@@ -307,11 +314,11 @@ impl TFuncDef {
 }
 
 impl TSourceFile {
-    pub fn choose_optimization(&self) -> Result<TSourceFile, OptimizationError> {
+    pub fn choose_optimization(&self, verbosity: u8) -> Result<TSourceFile, OptimizationError> {
         let functions = self
             .functions
             .iter()
-            .map(|func| func.choose_optimization())
+            .map(|func| func.choose_optimization(verbosity))
             .collect::<Result<Vec<TFuncDef>, OptimizationError>>()?;
         Ok(TSourceFile { functions })
     }

@@ -10,8 +10,8 @@ use crate::{
     check::{
         builtins,
         optimization_chooser::OptimizationError,
-        overloads::TOverloadedFunc,
-        ztype_ast::{TExpr, TFuncDef, TStmt},
+        overloads::{TFunc, TOverloadedFunc},
+        ztype_ast::{TExpr, TFuncDef, TSourceFile, TStmt},
         ztype_inference::TypeError,
     },
     syntax::ast::*,
@@ -284,9 +284,6 @@ impl Env {
     /// Like assert but doesn't return an "error" if it fails.
     /// If true, records the condition as an assumption so it doesn't need to be recomputed in future.
     fn probe(&mut self, cond: &z3::ast::Bool) -> bool {
-        if self.verbosity >= 2 {
-            println!("Probing: {}", cond);
-        }
         let solver = z3::Solver::new();
         for assumption in &self.assumptions {
             solver.assert(assumption);
@@ -294,8 +291,14 @@ impl Env {
         solver.assert(cond.not());
         if solver.check() == z3::SatResult::Unsat {
             self.assumptions.push(cond.clone());
+            if self.verbosity >= 2 {
+                println!("Probing: {} - true", cond);
+            }
             true
         } else {
+            if self.verbosity >= 2 {
+                println!("Probing: {} - false", cond);
+            }
             false
         }
     }
@@ -446,10 +449,6 @@ impl Env {
         }
         Ok(new_env)
     }
-
-    fn check_preconditions(&mut self, func: &CheckedFunction) -> Result<(), CheckError> {
-        self.assert_exprs(&func.preconditions, "Precondition failed")
-    }
 }
 
 impl TStmt {
@@ -593,7 +592,8 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
                 let user_func = user_func.clone(); // clone it because we're doing other things to env and they conflict
                 let func_decl = user_func.z3_func_decl()?;
                 let mut call_env = env.enter_call_scope(&user_func, args)?;
-                call_env.check_preconditions(&user_func)?;
+                // Already done!
+                // call_env.check_preconditions(&user_func)?;
 
                 let z3_argrefs = args
                     .iter()
@@ -653,14 +653,15 @@ impl Env {
                 .ok_or(CheckError {
                     message: format!("Undefined function: {}", name),
                 })?;
-            Ok(TOverloadedFunc::simple(
-                &func
-                    .args
-                    .iter()
-                    .map(|a| a.arg_type.clone())
-                    .collect::<Vec<_>>(),
-                &func.return_type,
-            ))
+            Ok(TOverloadedFunc {
+                headline: TFunc {
+                    args: func.args.clone(),
+                    return_type: func.return_type.clone(),
+                    type_param_list: vec![],
+                },
+                optimizations: vec![],
+                preconditions: func.preconditions.clone(),
+            })
         }
     }
 
@@ -673,9 +674,12 @@ impl Env {
         let func = func.instantiate_from_types(&arg_types)?;
         assert!(arg_types.len() == exprs.len());
         let mut optimizations = vec![];
+        assert!(
+            func.headline.type_param_list.is_empty(),
+            "Type parameters not supported in z3 check yet"
+        );
         for opt in &func.optimizations {
-            let assumptions =
-                opt.assumptions_when_applying(&arg_types, exprs, &func.headline.type_param_list)?;
+            let assumptions = opt.assumptions_when_applying(&arg_types, exprs)?;
             let mut ok = true;
             for assumption in assumptions {
                 let cond_z3_value = assumption.z3_check(self)?.0;
@@ -686,6 +690,13 @@ impl Env {
             }
             if ok {
                 optimizations.push(opt.clone());
+            } else {
+                if self.verbosity >= 2 {
+                    println!(
+                        "Rejecting optimization {}",
+                        opt.debug_name
+                    );
+                }
             }
         }
         Ok(TOverloadedFunc {
@@ -717,13 +728,20 @@ impl TExpr {
                     .collect::<Vec<_>>();
                 let func: TOverloadedFunc = env.get_overloaded_func(name)?;
                 let func = env.keep_optimizations(&func, args)?;
-                let type_preconditions = func.lookup_type_preconditions(args)?;
-                // println!("Begin precondtion check for function call {}", name);
-                for cond in type_preconditions {
+                let preconditions = func.lookup_preconditions(args)?;
+                if env.verbosity >= 2 && !func.preconditions.is_empty() {
+                    println!(
+                        "Begin precondition check for function call {}, preconditions {:?}",
+                        name, func.preconditions
+                    );
+                }
+                for cond in preconditions {
                     let cond_z3_value = cond.z3_check(env)?.0;
                     env.assert(&boolean(&cond_z3_value)?, "Type precondition failed")?;
                 }
-                // println!("End precondtion check");
+                if env.verbosity >= 2 && !func.preconditions.is_empty() {
+                    println!("End precondition check for function call {}", name);
+                }
                 Ok((
                     z3_function_call(name, &z3args, env)?,
                     TExpr::FunctionCall {
@@ -882,11 +900,15 @@ pub fn z3_check(source_file: &SourceFile, verbosity: u8) -> Result<(), CheckErro
         }
     }
 
+    // let tsource_file = TSourceFile {
+    //     functions: other_funcs,
+    // };
+
     if verbosity >= 1 {
         println!("Z3 checking passed.");
         println!("Running optimization chooser...");
     }
-    let optimized_tsource_file = tsource_file.choose_optimization()?;
+    let optimized_tsource_file = tsource_file.choose_optimization(verbosity)?;
     if verbosity >= 1 {
         println!("Optimization choosing passed.");
         println!("{}", optimized_tsource_file);

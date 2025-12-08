@@ -148,21 +148,15 @@ pub fn builtins() -> HashMap<String, TOverloadedFunc> {
                         preconditions: vec![], // the "nonzero" precondition from the main function still applies
                     },
                     Optimization {
-                        debug_name: format!("i32_{}", name),
-                        arg_types: vec![ti32.clone(), ti32.clone()],
-                        return_type: ti32.clone(),
-                        preconditions: vec![],
-                    },
-                    Optimization {
                         debug_name: format!("u64_{}", name),
                         arg_types: vec![tu64.clone(), tu64.clone()],
                         return_type: tu64.clone(),
                         preconditions: vec![],
                     },
                     Optimization {
-                        debug_name: format!("i64_{}", name),
-                        arg_types: vec![ti64.clone(), ti64.clone()],
-                        return_type: ti64.clone(),
+                        debug_name: format!("i32_{}", name),
+                        arg_types: vec![ti32.clone(), ti32.clone()],
+                        return_type: ti32.clone(),
                         preconditions: vec![],
                     },
                     Optimization {

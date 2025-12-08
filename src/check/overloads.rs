@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    check::{ztype_ast::TExpr, ztype_inference::TypeError},
+    check::{
+        ztype_ast::{TExpr, TStmt},
+        ztype_inference::TypeError,
+    },
     syntax::ast::{Arg, Type},
 };
 
@@ -72,10 +75,9 @@ impl Optimization {
         &self,
         args: &[Type],
         exprs: &[TExpr],
-        type_param_list: &[String],
     ) -> Result<Vec<TExpr>, TypeError> {
         assert!(args.len() == exprs.len());
-        let mut type_preconditions = vec![];
+        let mut preconditions = self.preconditions.clone();
         for ((arg_type, expr), param_type) in args.iter().zip(exprs).zip(&self.arg_types) {
             if !arg_type.compatible_with(param_type) {
                 return Err(TypeError {
@@ -85,10 +87,9 @@ impl Optimization {
                     ),
                 });
             }
-            type_preconditions
-                .extend_from_slice(&param_type.type_assertions(expr.clone(), type_param_list)?);
+            preconditions.extend_from_slice(&param_type.type_assertions(expr.clone(), &[])?);
         }
-        Ok(type_preconditions)
+        Ok(preconditions)
     }
 
     pub fn instantiate(&self, mapping: &HashMap<String, Type>) -> Result<Optimization, TypeError> {
@@ -282,7 +283,7 @@ impl TOverloadedFunc {
 }
 
 impl TOverloadedFunc {
-    pub fn lookup_type_preconditions(&self, args: &[TExpr]) -> Result<Vec<TExpr>, TypeError> {
+    pub fn lookup_preconditions(&self, args: &[TExpr]) -> Result<Vec<TExpr>, TypeError> {
         let headline = &self.headline;
         if headline.args.len() != args.len() {
             return Err(TypeError {
@@ -294,20 +295,34 @@ impl TOverloadedFunc {
             });
         }
         let mut compatible = true;
-        let mut type_preconditions = vec![];
+
+        let mut preconditions = vec![];
+
+        if !self.preconditions.is_empty() {
+            let arg_mapping = headline
+                .args
+                .iter()
+                .map(|arg| arg.name.clone())
+                .zip(args.iter().cloned())
+                .collect::<HashMap<_, _>>();
+            for cond in &self.preconditions {
+                preconditions.push(cond.subst(&arg_mapping)?);
+            }
+        }
+
         for (arg, param) in args.iter().zip(&headline.args) {
             if !arg.typ().compatible_with(&param.arg_type) {
                 compatible = false;
                 break;
             }
-            type_preconditions.extend_from_slice(
+            preconditions.extend_from_slice(
                 &param
                     .arg_type
                     .type_assertions(arg.clone(), &headline.type_param_list)?,
             );
         }
         if compatible {
-            return Ok(type_preconditions);
+            return Ok(preconditions);
         }
         Err(TypeError {
             message: format!(
@@ -318,5 +333,100 @@ impl TOverloadedFunc {
                     .join(", ")
             ),
         })
+    }
+}
+
+impl TStmt {
+    pub fn subst(&self, mapping: &HashMap<String, TExpr>) -> Result<TStmt, TypeError> {
+        match self {
+            TStmt::Expr(expr) => {
+                let new_expr = expr.subst(mapping)?;
+                Ok(TStmt::Expr(new_expr))
+            }
+            TStmt::Let {
+                name,
+                typ,
+                mutable,
+                type_declared,
+                value,
+            } => {
+                let new_value = value.subst(mapping)?;
+                Ok(TStmt::Let {
+                    name: name.clone(),
+                    typ: typ.clone(),
+                    mutable: *mutable,
+                    type_declared: *type_declared,
+                    value: new_value,
+                })
+            }
+            TStmt::Assign { name, value, typ } => {
+                let new_value = value.subst(mapping)?;
+                Ok(TStmt::Assign {
+                    name: name.clone(),
+                    typ: typ.clone(),
+                    value: new_value,
+                })
+            }
+        }
+    }
+}
+
+impl TExpr {
+    pub fn subst(&self, mapping: &HashMap<String, TExpr>) -> Result<TExpr, TypeError> {
+        match self {
+            TExpr::Literal(literal) => Ok(TExpr::Literal(literal.clone())),
+            TExpr::Variable { name, .. } => {
+                if let Some(replacement) = mapping.get(name) {
+                    Ok(replacement.clone())
+                } else {
+                    Err(TypeError {
+                        message: format!("No substitution found for variable {}", name),
+                    })
+                }
+            }
+            TExpr::FunctionCall {
+                name,
+                args,
+                return_type,
+                optimizations,
+            } => {
+                let new_args = args
+                    .iter()
+                    .map(|arg| arg.subst(mapping))
+                    .collect::<Result<Vec<TExpr>, TypeError>>()?;
+                Ok(TExpr::FunctionCall {
+                    name: name.clone(),
+                    args: new_args,
+                    return_type: return_type.clone(),
+                    optimizations: optimizations.clone(),
+                })
+            }
+            TExpr::Semicolon(stmt, expr) => {
+                let new_stmt = stmt.subst(mapping)?;
+                let new_expr = expr.subst(mapping)?;
+                Ok(TExpr::Semicolon(Box::new(new_stmt), Box::new(new_expr)))
+            }
+            TExpr::Sequence {
+                elements,
+                elem_type,
+            } => {
+                let new_elements = elements
+                    .iter()
+                    .map(|elem| elem.subst(mapping))
+                    .collect::<Result<Vec<TExpr>, TypeError>>()?;
+                Ok(TExpr::Sequence {
+                    elements: new_elements,
+                    elem_type: elem_type.clone(),
+                })
+            }
+            TExpr::EmptySequence => Ok(TExpr::EmptySequence),
+            TExpr::Lambda { args, body } => {
+                let new_body = body.subst(mapping)?;
+                Ok(TExpr::Lambda {
+                    args: args.clone(),
+                    body: Box::new(new_body),
+                })
+            }
+        }
     }
 }
