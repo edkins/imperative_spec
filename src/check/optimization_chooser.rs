@@ -114,7 +114,7 @@ impl TypeExpectations {
         //     self
         // );
         for optim in optims {
-            if self.enough_to_get_from(&established_type, &optim.func.return_type) {
+            if self.enough_to_get_from(established_type, &optim.func.return_type) {
                 return Some(optim.clone());
             }
         }
@@ -149,18 +149,6 @@ impl CEnv {
     fn lookup_expectations(&self, name: &str) -> TypeExpectations {
         self.uses.get(name).cloned().unwrap_or_default()
     }
-
-    fn decide_optimization(
-        &mut self,
-        name: &str,
-        established_type: &Type,
-        optims: &[ConcreteOptimization],
-    ) -> Option<ConcreteOptimization> {
-        self.uses
-            .entry(name.to_owned())
-            .or_default()
-            .decide_optimization(established_type, optims)
-    }
 }
 
 impl TExpr {
@@ -186,7 +174,7 @@ impl TExpr {
                 optimizations,
             } => {
                 // println!("Choosing optimization for function call {} with expectations {}", name, expectations);
-                if let Some(optim) = expectations.decide_optimization(return_type, &optimizations) {
+                if let Some(optim) = expectations.decide_optimization(return_type, optimizations) {
                     env.decisions.push(optim.debug_name.clone());
                     assert!(optim.func.arg_types.len() == args.len());
                     TExpr::FunctionCall {
@@ -294,13 +282,13 @@ impl TFuncDef {
 
         for attrib in &self.attributes {
             #[allow(irrefutable_let_patterns)]
-            if let TFuncAttribute::CheckDecisions(decision_names) = attrib {
-                if env.decisions != *decision_names {
-                    return Err(OptimizationError::new(&format!(
-                        "Decisions mismatch in function {}: expected {:?}, got {:?}",
-                        self.name, decision_names, env.decisions
-                    )));
-                }
+            if let TFuncAttribute::CheckDecisions(decision_names) = attrib
+                && env.decisions != *decision_names
+            {
+                return Err(OptimizationError::new(&format!(
+                    "Decisions mismatch in function {}: expected {:?}, got {:?}",
+                    self.name, decision_names, env.decisions
+                )));
             }
         }
 

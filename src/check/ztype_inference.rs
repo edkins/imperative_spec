@@ -383,7 +383,7 @@ impl FuncDef {
         let attributes = self
             .attributes
             .iter()
-            .map(|attr| TFuncAttribute::from_expr(attr))
+            .map(TFuncAttribute::from_expr)
             .collect::<Result<Vec<TFuncAttribute>, TypeError>>()?;
 
         Ok(TFuncDef {

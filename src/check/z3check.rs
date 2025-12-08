@@ -289,7 +289,7 @@ impl Env {
         for assumption in &self.assumptions {
             solver.assert(assumption);
         }
-        solver.assert(&cond.not());
+        solver.assert(cond.not());
         if solver.check() == z3::SatResult::Unsat {
             self.assumptions.push(cond.clone());
             true

@@ -67,7 +67,7 @@ impl ConcreteOptimization {
         assert!(args.len() == exprs.len());
         let mut type_preconditions = vec![];
         for ((arg_type, expr), param_type) in args.iter().zip(exprs).zip(&self.func.arg_types) {
-            if !arg_type.compatible_with(&param_type) {
+            if !arg_type.compatible_with(param_type) {
                 return Err(TypeError {
                     message: format!(
                         "Cannot apply optimization {} due to incompatible argument types",
