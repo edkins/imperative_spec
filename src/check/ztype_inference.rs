@@ -111,7 +111,7 @@ impl Type {
 }
 
 impl Expr {
-    fn type_check(&self, env: &mut TEnv) -> Result<TExpr, TypeError> {
+    fn type_check(&self, env: &mut TEnv, hint: Option<&Type>) -> Result<TExpr, TypeError> {
         match self {
             Expr::Literal(lit) => Ok(TExpr::Literal(lit.clone())),
             Expr::Variable(x) => {
@@ -128,39 +128,53 @@ impl Expr {
             }
             Expr::FunctionCall { name, args } => {
                 let funcdef = env.get_function(name)?;
+                if args.len() != funcdef.args.len() {
+                    return Err(TypeError {
+                        message: format!(
+                            "Function {} expects {} arguments, got {}",
+                            name,
+                            funcdef.args.len(),
+                            args.len()
+                        ),
+                    });
+                }
                 let targs = args
                     .iter()
-                    .map(|a| a.type_check(env))
+                    .zip(&funcdef.args)
+                    .map(|(a0, a1)| a0.type_check(env, Some(&a1.arg_type)))
                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
                 funcdef.make_func_call(&targs)
             }
             Expr::Semicolon(stmt, expr) => {
                 let tstmt = stmt.type_check(env)?;
-                let texpr = expr.type_check(env)?;
+                let texpr = expr.type_check(env, hint)?;
                 Ok(TExpr::Semicolon(Box::new(tstmt.clone()), Box::new(texpr)))
             }
             Expr::Sequence { square, elems } => {
-                if elems.is_empty() {
-                    Ok(TExpr::EmptySequence)
-                } else {
-                    let telems = elems
-                        .iter()
-                        .map(|e| e.type_check(env))
-                        .collect::<Result<Vec<TExpr>, TypeError>>()?;
-                    let first_type = telems[0].typ();
-                    for te in &telems[1..] {
-                        if te.typ() != first_type {
-                            return Err(TypeError {
-                                message: "All elements of the sequence must have the same type"
-                                    .to_owned(),
-                            });
-                        }
-                    }
-                    Ok(TExpr::Sequence {
-                        elements: telems,
-                        elem_type: first_type,
-                    })
+                if hint.is_none() {
+                    return Err(TypeError {
+                        message: "Type hint required for sequence expressions".to_owned(),
+                    });
                 }
+                let hint = hint.unwrap();
+                if *square != hint.is_square_seq() {
+                    return Err(TypeError {
+                        message: format!(
+                            "Sequence square type mismatch: expected square={}, got square={}",
+                            hint.is_square_seq(),
+                            square
+                        ),
+                    });
+                }
+                let elements = elems
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| e.type_check(env, hint.get_either_elem_type(i as u64)))
+                    .collect::<Result<Vec<TExpr>, TypeError>>()?;
+                Ok(TExpr::Sequence {
+                    elements,
+                    sequence_type: hint.clone(),
+                })
             }
         }
     }
@@ -204,11 +218,11 @@ impl Stmt {
     fn type_check(&self, env: &mut TEnv) -> Result<TStmt, TypeError> {
         match self {
             Stmt::Expr(e) => {
-                let te = e.type_check(env)?;
+                let te = e.type_check(env, None)?;
                 Ok(TStmt::Expr(te))
             }
             Stmt::Let { name, typ, value } => {
-                let tvalue = value.type_check(env)?;
+                let tvalue = value.type_check(env, typ.as_ref())?;
                 let vtype = if let Some(typ) = typ {
                     if !tvalue.typ().compatible_with(typ) {
                         return Err(TypeError {
@@ -234,7 +248,7 @@ impl Stmt {
                 })
             }
             Stmt::LetMut { name, typ, value } => {
-                let tvalue = value.type_check(env)?;
+                let tvalue = value.type_check(env, Some(typ))?;
                 if !tvalue.typ().compatible_with(typ) {
                     return Err(TypeError {
                         message: format!(
@@ -255,16 +269,20 @@ impl Stmt {
                 })
             }
             Stmt::Assign { name, op, value } => {
-                let tvalue = value.type_check(env)?;
-                let var_type = env.variables.get(name).ok_or(TypeError {
-                    message: format!("Undefined variable: {}", name),
-                })?;
+                let var_type = env
+                    .variables
+                    .get(name)
+                    .ok_or(TypeError {
+                        message: format!("Undefined variable: {}", name),
+                    })?
+                    .clone();
+                let tvalue = value.type_check(env, Some(&var_type))?;
                 let old_left = TExpr::Variable {
                     name: name.clone(),
                     typ: var_type.clone(),
                 };
                 let result = op.mk_expr(&old_left, &tvalue)?;
-                if !result.typ().compatible_with(var_type) {
+                if !result.typ().compatible_with(&var_type) {
                     return Err(TypeError {
                         message: format!(
                             "Resulting type of assignment does not match variable type for {}",
@@ -340,7 +358,9 @@ impl FuncDef {
                 .insert(a.name.clone(), a2.arg_type.clone());
         }
         let args_env = local_env.clone();
-        let tbody = self.body.type_check(&mut local_env)?;
+        let tbody = self
+            .body
+            .type_check(&mut local_env, Some(&decl.return_type))?;
         if !tbody.typ().compatible_with(&decl.return_type) {
             return Err(TypeError {
                 message: format!(
@@ -356,7 +376,7 @@ impl FuncDef {
         preconditions.extend(
             self.preconditions
                 .iter()
-                .map(|p| p.type_check(&mut args_env.clone()))
+                .map(|p| p.type_check(&mut args_env.clone(), Some(&Type::basic("bool"))))
                 .collect::<Result<Vec<TExpr>, TypeError>>()?,
         );
         let mut post_args_env = args_env.clone();
@@ -368,7 +388,7 @@ impl FuncDef {
         postconditions.extend(
             self.postconditions
                 .iter()
-                .map(|p| p.type_check(&mut post_args_env))
+                .map(|p| p.type_check(&mut post_args_env, Some(&Type::basic("bool"))))
                 .collect::<Result<Vec<TExpr>, TypeError>>()?,
         );
 

@@ -2,7 +2,7 @@ fn main() {
     let really_void:(u8;0) = ();
     let stuple:(u8,) = (255,);
     let stuple2:(u8;1) = (255,);
-    let tuple:(u8,i8) = (255,-128);
+    let tuple:(u8,i8,str) = (255,-128,"hello");
     let htuple:(u8;3) = (255,254,253,);
     let evec:[u8] = [];
     let earray:[u8;0] = [];

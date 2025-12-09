@@ -243,8 +243,8 @@ impl Type {
         } else if concrete.name != self.name {
             return Err(TypeError {
                 message: format!(
-                    "Type name mismatch: expected {}, found {} (type parameters: {:?})",
-                    self.name, concrete.name, param_list
+                    "Type name mismatch: expected {}, found {} (type variables: {:?})",
+                    self, concrete, param_list
                 ),
             });
         }
@@ -364,19 +364,18 @@ impl TExpr {
             }
             TExpr::Sequence {
                 elements,
-                elem_type,
+                sequence_type,
             } => {
                 let concrete_elements = elements
                     .iter()
                     .map(|elem| elem.instantiate(mapping))
                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
-                let concrete_elem_type = elem_type.instantiate(mapping)?;
+                let concrete_sequence_type = sequence_type.instantiate(mapping)?;
                 Ok(TExpr::Sequence {
                     elements: concrete_elements,
-                    elem_type: concrete_elem_type,
+                    sequence_type: concrete_sequence_type,
                 })
             }
-            TExpr::EmptySequence => Ok(TExpr::EmptySequence),
             TExpr::Lambda { args, body } => {
                 let concrete_args = args
                     .iter()
@@ -386,6 +385,13 @@ impl TExpr {
                 Ok(TExpr::Lambda {
                     args: concrete_args,
                     body: Box::new(concrete_body),
+                })
+            }
+            TExpr::TupleAt { tuple, index } => {
+                let concrete_tuple = tuple.instantiate(mapping)?;
+                Ok(TExpr::TupleAt {
+                    tuple: Box::new(concrete_tuple),
+                    index: *index,
                 })
             }
         }

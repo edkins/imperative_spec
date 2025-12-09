@@ -174,7 +174,8 @@ impl TFuncDef {
         }
         Err(TypeError {
             message: format!(
-                "No matching function overload found for given argument types {}",
+                "instantiate_from_types: No matching function overload found for {} given argument types {}",
+                self.name,
                 arg_types
                     .iter()
                     .map(|t| t.to_string())
@@ -218,57 +219,6 @@ impl TFuncDef {
                 .transpose()?,
         })
     }
-
-    // pub fn extract_single(&self) -> Result<TFunc, TypeError> {
-    //     if !self.headline.type_param_list.is_empty() {
-    //         return Err(TypeError {
-    //             message: "Cannot extract single function from parameterized overloaded function"
-    //                 .to_owned(),
-    //         });
-    //     }
-    //     Ok(TFunc {
-    //         args: self.headline.args.clone(),
-    //         return_type: self.headline.return_type.clone(),
-    //         type_param_list: vec![],
-    //     })
-    // }
-
-    // pub fn lookup_return_type(&self, arg_types: &[Type]) -> Result<Type, TypeError> {
-    //     let headline = &self.headline;
-    //     if headline.arg_types.len() != arg_types.len() {
-    //         return Err(TypeError {
-    //             message: format!(
-    //                 "Wrong number of arguments: expected {}, got {}",
-    //                 headline.arg_types.len(),
-    //                 arg_types.len()
-    //             ),
-    //         });
-    //     }
-    //     let mut compatible = true;
-    //     let mut mapping = HashMap::new();
-    //     for (arg_type, param_type) in arg_types.iter().zip(&headline.arg_types) {
-    //         param_type.unify(arg_type, &mut mapping)?;
-    //     }
-    //     for (arg_type, param_type) in arg_types.iter().zip(&headline.arg_types) {
-    //         if !arg_type.compatible_with(&param_type.instantiate(&mapping)?) {
-    //             compatible = false;
-    //             break;
-    //         }
-    //     }
-    //     if compatible {
-    //         return headline.return_type.instantiate(&mapping);
-    //     }
-    //     Err(TypeError {
-    //         message: format!(
-    //             "No matching function overload found for given argument types {}",
-    //             arg_types
-    //                 .iter()
-    //                 .map(|t| t.to_string())
-    //                 .collect::<Vec<String>>()
-    //                 .join(", ")
-    //         ),
-    //     })
-    // }
 }
 
 impl TFuncDef {
@@ -315,7 +265,8 @@ impl TFuncDef {
         }
         Err(TypeError {
             message: format!(
-                "No matching function overload found for given argument types {}",
+                "lookup_preconditions: No matching function overload found for {} given argument types {}",
+                self.name,
                 args.iter()
                     .map(|t| t.typ().to_string())
                     .collect::<Vec<String>>()
@@ -397,7 +348,7 @@ impl TExpr {
             }
             TExpr::Sequence {
                 elements,
-                elem_type,
+                sequence_type,
             } => {
                 let new_elements = elements
                     .iter()
@@ -405,15 +356,21 @@ impl TExpr {
                     .collect::<Result<Vec<TExpr>, TypeError>>()?;
                 Ok(TExpr::Sequence {
                     elements: new_elements,
-                    elem_type: elem_type.clone(),
+                    sequence_type: sequence_type.clone(),
                 })
             }
-            TExpr::EmptySequence => Ok(TExpr::EmptySequence),
             TExpr::Lambda { args, body } => {
                 let new_body = body.subst(mapping)?;
                 Ok(TExpr::Lambda {
                     args: args.clone(),
                     body: Box::new(new_body),
+                })
+            }
+            TExpr::TupleAt { tuple, index } => {
+                let new_tuple = tuple.subst(mapping)?;
+                Ok(TExpr::TupleAt {
+                    tuple: Box::new(new_tuple),
+                    index: *index,
                 })
             }
         }

@@ -192,6 +192,58 @@ impl Literal {
 }
 
 impl Type {
+    fn z3_datatype_name(&self) -> String {
+        let mut name = self.name.to_owned();
+        if !self.type_args.is_empty() {
+            name.push('<');
+            for (i, arg) in self.type_args.iter().enumerate() {
+                match arg {
+                    TypeArg::Type(t) => {
+                        name.push_str(&t.z3_datatype_name());
+                    }
+                    TypeArg::Bound(b) => {
+                        name.push_str(&b.to_string());
+                    }
+                }
+                if i + 1 < self.type_args.len() {
+                    name.push(',');
+                }
+            }
+            name.push('>');
+        }
+        name
+    }
+
+    fn to_z3_datatype(&self) -> Result<z3::DatatypeSort, CheckError> {
+        if self.is_round_seq() {
+            if let Some(elem_types) = self.get_round_elem_type_vector() {
+                let datatype_name = self.z3_datatype_name();
+                let mut sorts = vec![];
+                for (i, et) in elem_types.iter().enumerate() {
+                    sorts.push((i.to_string(), et.to_z3_sort()?));
+                }
+                let sorts = sorts
+                    .iter()
+                    .map(|(name, sort)| (name.as_str(), z3::DatatypeAccessor::Sort(sort.clone())))
+                    .collect::<Vec<_>>();
+                Ok(z3::DatatypeBuilder::new(datatype_name)
+                    .variant("Tuple", sorts)
+                    .finish())
+            } else {
+                Err(CheckError {
+                    message: format!(
+                        "Round sequence type {} does not have known element types",
+                        self
+                    ),
+                })
+            }
+        } else {
+            Err(CheckError {
+                message: format!("Unsupported type for to_z3_sort: {}", self),
+            })
+        }
+    }
+
     fn to_z3_sort(&self) -> Result<z3::Sort, CheckError> {
         if self.is_int() {
             Ok(z3::Sort::int())
@@ -201,14 +253,20 @@ impl Type {
             Ok(z3::Sort::string())
         } else if self.is_void() {
             Ok(void_value().get_sort())
-        } else if self.is_named_seq() {
-            let elem_type = self.one_type_arg()?;
-            let elem_sort = elem_type.to_z3_sort()?;
-            Ok(z3::Sort::seq(&elem_sort))
+        } else if self.is_square_seq() {
+            if let Some(elem_type) = self.get_uniform_square_elem_type() {
+                let elem_sort = elem_type.to_z3_sort()?;
+                Ok(z3::Sort::seq(&elem_sort))
+            } else {
+                Err(CheckError {
+                    message: format!(
+                        "Square sequence type {} does not have known uniform element type",
+                        self
+                    ),
+                })
+            }
         } else {
-            Err(CheckError {
-                message: format!("Unsupported type for to_z3_sort: {}", self),
-            })
+            Ok(self.to_z3_datatype()?.sort)
         }
     }
 
@@ -221,9 +279,20 @@ impl Type {
             Ok(z3::ast::String::new_const(name).into())
         } else if self.is_void() {
             Ok(void_value())
-        } else if let Some(elem_type) = self.get_named_seq() {
-            let elem_sort = elem_type.to_z3_sort()?;
+        } else if self.is_square_seq() {
+            let elem_sort = self
+                .get_uniform_square_elem_type()
+                .ok_or_else(|| CheckError {
+                    message: format!(
+                        "Square sequence type {} does not have known uniform element type",
+                        self
+                    ),
+                })?
+                .to_z3_sort()?;
             Ok(z3::ast::Seq::new_const(name, &elem_sort).into())
+        } else if self.is_round_seq() {
+            let dt = self.to_z3_datatype()?;
+            Ok(z3::ast::Datatype::new_const(name, &dt.sort).into())
         } else {
             Err(CheckError {
                 message: format!("Unsupported type for to_z3_const: {}", self),
@@ -580,6 +649,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
         (">=", 2) => Ok(int(&args[0])?.ge(&int(&args[1])?).into()),
         ("+", 2) => Ok((int(&args[0])? + int(&args[1])?).into()),
         ("-", 2) => Ok((int(&args[0])? - int(&args[1])?).into()),
+        ("neg", 1) => Ok((-int(&args[0])?).into()),
         ("*", 2) => Ok((int(&args[0])? * int(&args[1])?).into()),
         ("%", 2) => Ok((int(&args[0])? % int(&args[1])?).into()),
         ("/", 2) => Ok((int(&args[0])? / int(&args[1])?).into()),
@@ -660,7 +730,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
                 Ok(ast)
             } else {
                 Err(CheckError {
-                    message: format!("Undefined function: {}", name),
+                    message: format!("No z3 implementation for function: {}", name),
                 })
             }
         }
@@ -804,7 +874,7 @@ impl TExpr {
             }
             TExpr::Sequence {
                 elements,
-                elem_type,
+                sequence_type,
             } => {
                 let elempairs = elements
                     .iter()
@@ -819,15 +889,12 @@ impl TExpr {
                     .map(|(_, texpr)| texpr.clone())
                     .collect::<Vec<_>>();
                 Ok((
-                    mk_z3_sequence(z3elems, elem_type)?,
+                    mk_z3_sequence(z3elems, sequence_type)?,
                     TExpr::Sequence {
                         elements: newelems,
-                        elem_type: elem_type.clone(),
+                        sequence_type: sequence_type.clone(),
                     },
                 ))
-            }
-            TExpr::EmptySequence => {
-                unreachable!("We shouldn't see EmptySequence past type checking");
             }
             TExpr::Lambda { args, body } => {
                 let mut new_env = env.clone();
@@ -849,21 +916,55 @@ impl TExpr {
                     },
                 ))
             }
+            TExpr::TupleAt { tuple, index } => {
+                let (z3_tuple, new_tuple) = tuple.z3_check(env)?;
+                let dt = tuple.typ().to_z3_datatype()?;
+                let accessor = &dt.variants[0].accessors[*index as usize];
+                let at_value = accessor.apply(&[&z3_tuple as &dyn z3::ast::Ast]);
+                Ok((
+                    at_value,
+                    TExpr::TupleAt {
+                        tuple: Box::new(new_tuple),
+                        index: *index,
+                    },
+                ))
+            }
         }
     }
 }
 
-fn mk_z3_sequence(elems: Vec<Dynamic>, elem_type: &Type) -> Result<Dynamic, CheckError> {
-    if elems.is_empty() {
-        return Ok(z3::ast::Seq::empty(&elem_type.to_z3_sort()?).into());
+fn mk_z3_sequence(elems: Vec<Dynamic>, seq_type: &Type) -> Result<Dynamic, CheckError> {
+    if seq_type.is_round_seq() {
+        let dt = seq_type.to_z3_datatype()?;
+        Ok(dt.variants[0].constructor.apply(
+            &elems
+                .iter()
+                .map(|e| e as &dyn z3::ast::Ast)
+                .collect::<Vec<&dyn z3::ast::Ast>>(),
+        ))
+    } else if seq_type.is_square_seq() {
+        if elems.is_empty() {
+            let elem_type = seq_type
+                .get_uniform_square_elem_type()
+                .ok_or_else(|| CheckError {
+                    message: format!(
+                        "Square sequence type {} does not have known uniform element type",
+                        seq_type
+                    ),
+                })?;
+            return Ok(z3::ast::Seq::empty(&elem_type.to_z3_sort()?).into());
+        }
+        let z3_units = elems
+            .into_iter()
+            .map(|elem| z3::ast::Seq::unit(&elem))
+            .collect::<Vec<_>>();
+        let seq_ast = z3::ast::Seq::concat(&z3_units);
+        Ok(seq_ast.into())
+    } else {
+        Err(CheckError {
+            message: format!("Doesn't look like a sequence type: {}", seq_type),
+        })
     }
-    // let elem_sort = elem_type.to_z3_sort()?;
-    let mut z3_units: Vec<z3::ast::Seq> = Vec::new();
-    for elem in elems {
-        z3_units.push(z3::ast::Seq::unit(&elem));
-    }
-    let seq_ast = z3::ast::Seq::concat(&z3_units);
-    Ok(seq_ast.into())
 }
 
 fn z3_check_funcdef(

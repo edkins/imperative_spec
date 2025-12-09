@@ -68,12 +68,12 @@ fn builtins() -> HashMap<String, TFuncDef> {
     let tvoid = Type::basic("void");
     let tparam = Type::basic("T");
     let uparam = Type::basic("U");
-    let seqt = Type {
-        name: "Seq".to_owned(),
+    let vect = Type {
+        name: "Vec".to_owned(),
         type_args: vec![TypeArg::Type(tparam.clone())],
     };
-    let sequ = Type {
-        name: "Seq".to_owned(),
+    let vecu = Type {
+        name: "Vec".to_owned(),
         type_args: vec![TypeArg::Type(uparam.clone())],
     };
 
@@ -82,11 +82,14 @@ fn builtins() -> HashMap<String, TFuncDef> {
     functions.insert("==".to_owned(), eq.clone());
     functions.insert("!=".to_owned(), ne.clone());
 
-    insert_multiple(
-        &mut functions,
-        &["<", "<=", ">", ">="],
-        TFuncDef::simple("", &[tint.clone(), tint.clone()], &tbool),
-    );
+    let lt = TFuncDef::simple("<", &[tint.clone(), tint.clone()], &tbool);
+    let le = TFuncDef::simple("<=", &[tint.clone(), tint.clone()], &tbool);
+    let gt = TFuncDef::simple(">", &[tint.clone(), tint.clone()], &tbool);
+    let ge = TFuncDef::simple(">=", &[tint.clone(), tint.clone()], &tbool);
+    functions.insert("<".to_owned(), lt.clone());
+    functions.insert("<=".to_owned(), le.clone());
+    functions.insert(">".to_owned(), gt.clone());
+    functions.insert(">=".to_owned(), ge.clone());
 
     functions.insert(
         "neg".to_owned(),
@@ -208,16 +211,17 @@ fn builtins() -> HashMap<String, TFuncDef> {
         "assert".to_owned(),
         TFuncDef::simple("assert", from_ref(&tbool), &tvoid),
     );
+    let seq_len = TFuncDef::psimple("seq_len", from_ref(&vect), &tint, &["T"]);
     functions.insert(
         "seq_len".to_owned(),
-        TFuncDef::psimple("seq_len", from_ref(&seqt), &tint, &["T"]),
+        seq_len.clone(),
     );
     functions.insert(
         "seq_map".to_owned(),
         TFuncDef::psimple(
             "seq_map",
-            &[seqt.clone(), Type::lambda(from_ref(&tparam), &uparam)],
-            &sequ,
+            &[vect.clone(), Type::lambda(from_ref(&tparam), &uparam)],
+            &vecu,
             &["T", "U"],
         ),
     );
@@ -226,13 +230,46 @@ fn builtins() -> HashMap<String, TFuncDef> {
         TFuncDef::psimple(
             "seq_foldl",
             &[
-                seqt.clone(),
+                vect.clone(),
                 Type::lambda(&[uparam.clone(), tparam.clone()], &uparam),
                 uparam.clone(),
             ],
             &uparam,
             &["T", "U"],
         ),
+    );
+    functions.insert(
+        "seq_at".to_owned(),
+        TFuncDef {
+            name: "seq_at".to_owned(),
+            args: args2(&vect, &tint),
+            return_name: "__ret__".to_owned(),
+            return_type: tparam.clone(),
+            type_params: vec!["T".to_owned()],
+            optimizations: vec![],
+            preconditions: vec![
+                ge.make_func_call(&[
+                    TExpr::Variable {
+                        name: "arg1".to_owned(),
+                        typ: tint.clone(),
+                    },
+                    TExpr::zero(),
+                ]).unwrap(),
+                lt.make_func_call(&[
+                    TExpr::Variable {
+                        name: "arg1".to_owned(),
+                        typ: tint.clone(),
+                    },
+                    seq_len.make_func_call(from_ref(&TExpr::Variable {
+                        name: "arg0".to_owned(),
+                        typ: vect.clone(),
+                    })).unwrap(),
+                ]).unwrap(),
+            ],
+            attributes: vec![],
+            postconditions: vec![],
+            body: None,
+        }
     );
     functions
 }

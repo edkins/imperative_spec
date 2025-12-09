@@ -13,18 +13,44 @@ impl Display for TypeArg {
 
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)?;
-        if !self.type_args.is_empty() {
-            write!(f, "<")?;
-            for (i, arg) in self.type_args.iter().enumerate() {
-                write!(f, "{}", arg)?;
-                if i != self.type_args.len() - 1 {
-                    write!(f, ", ")?;
+        match (self.name.as_str(), self.type_args.len()) {
+            ("Tuple", n) if n >= 1 => {
+                write!(f, "(")?;
+                let t = &self.type_args[0];
+                if self.type_args.len() >= 2 && self.type_args.iter().all(|arg| arg == t) {
+                    write!(f, "{}", t)?;
+                    write!(f, ";{}", n)?;
+                } else {
+                    for (i, arg) in self.type_args.iter().enumerate() {
+                        write!(f, "{}", arg)?;
+                        if i != self.type_args.len() - 1 || self.type_args.len() == 1 {
+                            write!(f, ",")?;
+                        }
+                    }
                 }
+                write!(f, ")")
             }
-            write!(f, ">")?;
+            ("Vec", 1) => {
+                write!(f, "[{}]", self.type_args[0])
+            }
+            ("Array", 2) => {
+                write!(f, "[{};{}]", self.type_args[0], self.type_args[1])
+            }
+            _ => {
+                write!(f, "{}", self.name)?;
+                if !self.type_args.is_empty() {
+                    write!(f, "<")?;
+                    for (i, arg) in self.type_args.iter().enumerate() {
+                        write!(f, "{}", arg)?;
+                        if i != self.type_args.len() - 1 {
+                            write!(f, ", ")?;
+                        }
+                    }
+                    write!(f, ">")?;
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 }
 

@@ -22,6 +22,15 @@ impl Bound {
     }
 }
 
+impl TypeArg {
+    fn condless(&self) -> bool {
+        match self {
+            TypeArg::Type(t) => t.condless(),
+            TypeArg::Bound(_) => true,
+        }
+    }
+}
+
 impl Type {
     // pub fn type_assertions_on_name(&self, more_general_type: &Type, name: &str) -> Vec<TExpr> {
     //     assert!(self.is_subtype_of(more_general_type));
@@ -56,42 +65,41 @@ impl Type {
             }
         } else if self.is_int() {
             Ok(Type::basic("int"))
-        } else if let Some(elem) = self.get_named_seq() {
-            let general_elem = elem.most_general_type(param_list)?;
-            Ok(Type {
-                name: "Seq".to_owned(),
-                type_args: vec![TypeArg::Type(general_elem)],
-            })
+        // } else if let Some(elem) = self.get_named_seq() {
+        //     let general_elem = elem.most_general_type(param_list)?;
+        //     Ok(Type {
+        //         name: "Seq".to_owned(),
+        //         type_args: vec![TypeArg::Type(general_elem)],
+        //     })
         } else {
             Ok(self.clone())
         }
     }
 
     pub fn condless(&self) -> bool {
-        if matches!(
-            self.name.as_str(),
-            "int" | "z8" | "z16" | "z32" | "z64" | "str" | "bool" | "void" | "EmptySeq"
-        ) && self.type_args.is_empty()
-        {
-            return true;
-        }
-        if let Some(elem) = self.get_named_seq() {
-            return elem.condless();
-        }
-        if self.name == "Lambda" {
-            for arg in &self.type_args {
-                match arg {
-                    TypeArg::Type(t) => {
-                        if !t.condless() {
-                            return false;
-                        }
-                    }
-                    TypeArg::Bound(_) => {}
-                }
+        match (self.name.as_str(), self.type_args.len()) {
+            ("int" | "z8" | "z16" | "z32" | "z64" | "str" | "bool" | "void", 0) => true,
+            ("Tuple", _) => {
+                assert!(self.type_args.len() > 0);
+                self.type_args.iter().all(TypeArg::condless)
             }
-            return true;
+            ("Array", 2) => self.type_args.iter().all(TypeArg::condless),
+            ("Vec", 1) => self.type_args.iter().all(TypeArg::condless),
+            ("Lambda", _) => {
+                for arg in &self.type_args {
+                    match arg {
+                        TypeArg::Type(t) => {
+                            if !t.condless() {
+                                return false;
+                            }
+                        }
+                        TypeArg::Bound(_) => {}
+                    }
+                }
+                true
+            }
+            _ => false,
         }
-        false
     }
 
     pub fn type_assertions(
@@ -105,7 +113,7 @@ impl Type {
                 let (lower, upper) = lookup_int_bounds(&self.name);
                 Ok(bounds_to_expr(lower, upper, expr))
             }
-            "Seq" | "Vec" => {
+            "Vec" => {
                 if let &[TypeArg::Type(elem_type)] = &self.type_args.as_slice() {
                     if let Some(lambda) = elem_type
                         .type_lambda(&elem_type.most_general_type(param_list)?, param_list)?
@@ -144,6 +152,17 @@ impl Type {
                     })
                 }
             }
+            "Tuple" => {
+                let mut conds = vec![];
+                let elem_types = self.get_round_elem_type_vector().ok_or(TypeError {
+                    message: format!("Type {} should have only type arguments", self.name),
+                })?;
+                for (i, elem_type) in elem_types.iter().enumerate() {
+                    let elem_expr = expr.tuple_at(i as u64)?;
+                    conds.extend_from_slice(&elem_type.type_assertions(elem_expr, param_list)?);
+                }
+                Ok(conds)
+            }
             "str" | "bool" | "void" => Ok(vec![]),
             "Lambda" => {
                 if self.condless() {
@@ -175,12 +194,38 @@ impl Type {
         self.name.as_str() == "void" && self.type_args.is_empty()
     }
 
-    pub fn is_empty_seq(&self) -> bool {
-        self.name.as_str() == "EmptySeq" && self.type_args.is_empty()
+    // pub fn is_empty_seq(&self) -> bool {
+    //     self.name.as_str() == "EmptySeq" && self.type_args.is_empty()
+    // }
+
+    // pub fn get_named_seq(&self) -> Option<&Type> {
+    //     if self.is_named_seq() {
+    //         match &self.type_args[0] {
+    //             TypeArg::Type(t) => Some(t),
+    //             _ => None,
+    //         }
+    //     } else {
+    //         None
+    //     }
+    // }
+
+    pub fn is_square_seq(&self) -> bool {
+        (self.name.as_str() == "Array" && self.type_args.len() == 2)
+            || (self.name.as_str() == "Vec" && self.type_args.len() == 1)
     }
 
-    pub fn get_named_seq(&self) -> Option<&Type> {
-        if self.is_named_seq() {
+    pub fn is_round_seq(&self) -> bool {
+        // don't include void here
+        self.name == "Tuple"
+    }
+
+    pub fn get_uniform_square_elem_type(&self) -> Option<&Type> {
+        if self.name == "Array" && self.type_args.len() == 2 {
+            match &self.type_args[0] {
+                TypeArg::Type(t) => Some(t),
+                _ => None,
+            }
+        } else if self.name == "Vec" && self.type_args.len() == 1 {
             match &self.type_args[0] {
                 TypeArg::Type(t) => Some(t),
                 _ => None,
@@ -190,11 +235,61 @@ impl Type {
         }
     }
 
-    pub fn is_named_seq(&self) -> bool {
-        matches!(
-            (self.name.as_str(), self.type_args.len()),
-            ("Seq" | "Vec", 1) | ("Array", 2)
-        )
+    // pub fn get_square_elem_type(&self, i: u64) -> Option<&Type> {
+    //     self.get_uniform_square_elem_type()
+    // }
+
+    pub fn get_round_elem_type(&self, i: u64) -> Option<&Type> {
+        if self.name == "Tuple" {
+            match self.type_args.get(i as usize) {
+                Some(TypeArg::Type(t)) => Some(t),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn get_either_elem_type(&self, i: u64) -> Option<&Type> {
+        if self.is_square_seq() {
+            self.get_uniform_square_elem_type()
+        } else {
+            self.get_round_elem_type(i)
+        }
+    }
+
+    pub fn get_round_elem_type_vector(&self) -> Option<Vec<&Type>> {
+        if self.name == "Tuple" {
+            let mut result = vec![];
+            for ta in &self.type_args {
+                match ta {
+                    TypeArg::Type(t) => result.push(t),
+                    _ => return None,
+                }
+            }
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    // pub fn get_square_seq_length(&self) -> Option<u64> {
+    //     if self.name == "Array" && self.type_args.len() == 2 {
+    //         match &self.type_args[1] {
+    //             TypeArg::Bound(Bound::U64(u)) => Some(*u),
+    //             _ => None,
+    //         }
+    //     } else {
+    //         None
+    //     }
+    // }
+
+    pub fn get_round_seq_length(&self) -> Option<u64> {
+        if self.name == "Tuple" {
+            Some(self.type_args.len() as u64)
+        } else {
+            None
+        }
     }
 
     pub fn is_int(&self) -> bool {
@@ -218,44 +313,67 @@ impl Type {
             )
     }
 
-    pub fn discards_information(&self) -> bool {
-        matches!(self.name.as_str(), "z8" | "z16" | "z32" | "z64")
-    }
+    // pub fn discards_information(&self) -> bool {
+    //     matches!(self.name.as_str(), "z8" | "z16" | "z32" | "z64")
+    // }
 
-    pub fn is_subtype_of(&self, other: &Type) -> bool {
-        if self == other {
-            return true;
-        }
-        if self.is_empty_seq() && other.is_named_seq() {
-            return true;
-        }
-        if self.is_int()
-            && other.is_int()
-            && !self.discards_information()
-            && !other.discards_information()
-        {
-            let (self_min, self_max) = lookup_int_bounds(&self.name);
-            let (other_min, other_max) = lookup_int_bounds(&other.name);
-            if self_min >= other_min && self_max <= other_max {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn one_type_arg(&self) -> Result<Type, TypeError> {
-        if self.type_args.len() != 1 {
-            return Err(TypeError {
-                message: format!("Type {} should have exactly one type argument", self),
-            });
-        }
-        match &self.type_args[0] {
-            TypeArg::Type(t) => Ok(t.clone()),
-            _ => Err(TypeError {
-                message: format!("Type argument of {} is not a Type", self),
-            }),
-        }
-    }
+    // pub fn is_subtype_of(&self, other: &Type) -> bool {
+    //     if self == other {
+    //         return true;
+    //     }
+    //     if self.is_square_seq() && other.is_square_seq() {
+    //         let self_len = self.get_square_seq_length();
+    //         let other_len = other.get_square_seq_length();
+    //         if self_len.is_some() && other_len.is_some() && self_len != other_len {
+    //             return false;
+    //         }
+    //         if let Some(len) = self_len.or(other_len) {
+    //             for i in 0..len {
+    //                 let self_elem = self.get_square_elem_type(i).unwrap();
+    //                 let other_elem = other.get_square_elem_type(i).unwrap();
+    //                 if !self_elem.is_subtype_of(other_elem) {
+    //                     return false;
+    //                 }
+    //             }
+    //         } else {
+    //             let self_elem = self.get_uniform_square_elem_type().unwrap();
+    //             let other_elem = other.get_uniform_square_elem_type().unwrap();
+    //             if !self_elem.is_subtype_of(other_elem) {
+    //                 return false;
+    //             }
+    //         }
+    //         return true;
+    //     }
+    //     if self.is_round_seq() && other.is_round_seq() {
+    //         let self_len = self.get_round_seq_length();
+    //         let other_len = other.get_round_seq_length();
+    //         assert!(self_len.is_some() && other_len.is_some(), "Round sequences (tuples) must have known length right now");
+    //         if self_len != other_len {
+    //             return false;
+    //         }
+    //         let len = self_len.unwrap();
+    //         for i in 0..len {
+    //             let self_elem = self.get_round_elem_type(i).unwrap();
+    //             let other_elem = other.get_round_elem_type(i).unwrap();
+    //             if !self_elem.is_subtype_of(other_elem) {
+    //                 return false;
+    //             }
+    //         }
+    //         return true;
+    //     }
+    //     if self.is_int()
+    //         && other.is_int()
+    //         && !self.discards_information()
+    //         && !other.discards_information()
+    //     {
+    //         let (self_min, self_max) = lookup_int_bounds(&self.name);
+    //         let (other_min, other_max) = lookup_int_bounds(&other.name);
+    //         if self_min >= other_min && self_max <= other_max {
+    //             return true;
+    //         }
+    //     }
+    //     false
+    // }
 
     pub fn compatible_with(&self, other: &Type) -> bool {
         if self == other {
@@ -264,17 +382,17 @@ impl Type {
         if self.is_int() && other.is_int() {
             return true;
         }
-        if self.is_empty_seq() && other.is_named_seq() {
-            return true;
-        }
-        if self.is_named_seq() && other.is_empty_seq() {
-            return true;
-        }
-        if let Some(self_elem) = self.get_named_seq()
-            && let Some(other_elem) = other.get_named_seq()
-        {
-            return self_elem.compatible_with(other_elem);
-        }
+        // if self.is_empty_seq() && other.is_named_seq() {
+        //     return true;
+        // }
+        // if self.is_named_seq() && other.is_empty_seq() {
+        //     return true;
+        // }
+        // if let Some(self_elem) = self.get_named_seq()
+        //     && let Some(other_elem) = other.get_named_seq()
+        // {
+        //     return self_elem.compatible_with(other_elem);
+        // }
         false
     }
 
@@ -284,8 +402,8 @@ impl Type {
         param_list: &[String],
     ) -> Result<Option<TExpr>, TypeError> {
         assert!(
-            self.is_subtype_of(more_general_type),
-            "Type {} is not a subtype of {}",
+            self.compatible_with(more_general_type),
+            "Type {} is not compatible with {}",
             self,
             more_general_type
         );

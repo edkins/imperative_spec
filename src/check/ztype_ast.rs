@@ -1,6 +1,6 @@
 use crate::{
     check::overloads::Optimization,
-    syntax::ast::{Arg, Literal, Type, TypeArg},
+    syntax::ast::{Arg, Literal, Type},
 };
 
 // #[derive(Clone)]
@@ -28,12 +28,15 @@ pub enum TExpr {
     },
     Sequence {
         elements: Vec<TExpr>,
-        elem_type: Type,
+        sequence_type: Type,
     },
-    EmptySequence,
     Lambda {
         args: Vec<Arg>,
         body: Box<TExpr>,
+    },
+    TupleAt {
+        tuple: Box<TExpr>,
+        index: u64,
     },
 }
 
@@ -73,11 +76,7 @@ impl TExpr {
             TExpr::Variable { typ, .. } => typ.clone(),
             TExpr::Semicolon(_, expr) => expr.typ(),
             TExpr::FunctionCall { return_type, .. } => return_type.clone(),
-            TExpr::Sequence { elem_type, .. } => Type {
-                name: "Seq".to_owned(),
-                type_args: vec![TypeArg::Type(elem_type.clone())],
-            },
-            TExpr::EmptySequence => Type::basic("EmptySeq"),
+            TExpr::Sequence { sequence_type, .. } => sequence_type.clone(),
             TExpr::Lambda { args, body } => {
                 let arg_types = args
                     .iter()
@@ -85,6 +84,7 @@ impl TExpr {
                     .collect::<Vec<_>>();
                 Type::lambda(&arg_types, &body.typ())
             }
+            TExpr::TupleAt { tuple, index } => tuple.typ().get_round_elem_type(*index).unwrap().clone(),
         }
     }
 }
@@ -152,17 +152,29 @@ impl std::fmt::Display for TExpr {
                 }
                 Ok(())
             }
-            TExpr::Sequence { elements, .. } => {
-                write!(f, "[")?;
+            TExpr::Sequence {
+                elements,
+                sequence_type,
+            } => {
+                let square = sequence_type.is_square_seq();
+                if square {
+                    write!(f, "[")?;
+                } else {
+                    write!(f, "(")?;
+                }
                 for (i, element) in elements.iter().enumerate() {
                     write!(f, "{}", element)?;
-                    if i != elements.len() - 1 {
+                    if i != elements.len() - 1 || !square && elements.len() == 1 {
                         write!(f, ", ")?;
                     }
                 }
-                write!(f, "]")
+                if square {
+                    write!(f, "]")?;
+                } else {
+                    write!(f, ")")?;
+                }
+                write!(f, ":{}", sequence_type)
             }
-            TExpr::EmptySequence => write!(f, "[]"),
             TExpr::Lambda { args, body } => {
                 write!(f, "|")?;
                 for (i, arg) in args.iter().enumerate() {
@@ -172,6 +184,9 @@ impl std::fmt::Display for TExpr {
                     }
                 }
                 write!(f, "| {}", body)
+            }
+            TExpr::TupleAt { tuple, index } => {
+                write!(f, "{}.{}", tuple, index)
             }
         }
     }

@@ -90,7 +90,7 @@ impl TypeExpectations {
     }
 
     fn enough_to_get_from(&self, established_type: &Type, optim_type: &Type) -> bool {
-        if established_type.is_subtype_of(optim_type) {
+        if established_type == optim_type {
             return true;
         }
         if established_type.is_int() && optim_type.is_int() {
@@ -125,16 +125,6 @@ impl TypeExpectations {
 
     fn decide_literal(&self, literal: &Literal) -> TExpr {
         TExpr::Literal(literal.clone()) // TODO: SizedLiteral
-    }
-
-    fn seq_element(&self) -> TypeExpectations {
-        let mut elem_expectations = TypeExpectations::default();
-        for typ in &self.0 {
-            if let Some(elem_type) = typ.get_named_seq() {
-                elem_expectations.add_type(elem_type.clone());
-            }
-        }
-        elem_expectations
     }
 }
 
@@ -224,19 +214,25 @@ impl TExpr {
             }
             TExpr::Sequence {
                 elements,
-                elem_type,
+                sequence_type,
             } => {
-                let elem_expectations = expectations.seq_element();
                 let elements = elements
                     .iter()
-                    .map(|elem| elem.choose_optimization(env, &elem_expectations))
+                    .enumerate()
+                    .map(|(i, elem)| {
+                        elem.choose_optimization(
+                            env,
+                            &TypeExpectations::new(
+                                sequence_type.get_either_elem_type(i as u64).unwrap(),
+                            ),
+                        )
+                    })
                     .collect();
                 TExpr::Sequence {
                     elements,
-                    elem_type: elem_type.clone(),
+                    sequence_type: sequence_type.clone(),
                 }
             }
-            TExpr::EmptySequence => unreachable!("Should have decided empty sequence type earlier"),
             TExpr::Lambda { args, body } => {
                 let mut new_env = env.clone();
                 for arg in args {
@@ -246,6 +242,16 @@ impl TExpr {
                 TExpr::Lambda {
                     args: args.clone(),
                     body: Box::new(body),
+                }
+            }
+            TExpr::TupleAt { tuple, index } => {
+                let tuple = tuple.choose_optimization(
+                    env,
+                    &TypeExpectations::new(&tuple.typ()),
+                );
+                TExpr::TupleAt {
+                    tuple: Box::new(tuple),
+                    index: *index,
                 }
             }
         }

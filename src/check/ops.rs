@@ -43,6 +43,7 @@ pub trait Ops: Sized {
     fn seq_map(&self, f: &Self) -> Result<Self, TypeError>;
     fn seq_foldl(&self, f: &Self, initial: &Self) -> Result<Self, TypeError>;
     fn seq_all(&self, predicate: &Self) -> Result<Self, TypeError>;
+    // fn seq_at(&self, index: &Self) -> Result<Self, TypeError>;
     fn add(&self, other: &Self) -> Result<Self, TypeError>;
     fn sub(&self, other: &Self) -> Result<Self, TypeError>;
     fn ge(&self, other: &Self) -> Result<Self, TypeError>;
@@ -52,6 +53,29 @@ pub trait Ops: Sized {
 impl TExpr {
     pub fn zero() -> TExpr {
         TExpr::Literal(Literal::U64(0))
+    }
+
+    pub fn tuple_at(&self, index: u64) -> Result<TExpr, TypeError> {
+        if self.typ().is_round_seq() {
+            if index <= self.typ().get_round_seq_length().unwrap() {
+                Ok(TExpr::TupleAt { tuple: Box::new(self.clone()), index })
+            } else {
+                Err(TypeError {
+                    message: format!(
+                        "Index {} out of bounds for tuple of length {}",
+                        index,
+                        self.typ().get_round_seq_length().unwrap()
+                    ),
+                })
+            }
+        } else {
+            Err(TypeError {
+                message: format!(
+                    "Cannot access index {} of non-tuple type {}",
+                    index, self.typ()
+                ),
+            })
+        }
     }
 }
 
@@ -85,6 +109,10 @@ impl Ops for TExpr {
         self.seq_map(predicate)?
             .seq_foldl(&and_lambda(), &TExpr::Literal(Literal::Bool(true)))
     }
+
+    // fn seq_at(&self, index: &TExpr) -> Result<TExpr, TypeError> {
+    //     known_builtin("seq_at").make_func_call(&[self.clone(), index.clone()])
+    // }
 
     fn add(&self, other: &TExpr) -> Result<TExpr, TypeError> {
         known_builtin("+").make_func_call(&[self.clone(), other.clone()])
