@@ -929,6 +929,26 @@ impl TExpr {
                     },
                 ))
             }
+            TExpr::Cast { expr, to_type } => {
+                let (z3_expr, new_expr) = expr.z3_check(env)?;
+                if z3_expr.get_sort() != to_type.to_z3_sort()? {
+                    return Err(CheckError {
+                        message: format!(
+                            "Cannot cast expression of z3 sort {:?} to type {} of z3 sort {:?}",
+                            z3_expr.get_sort(),
+                            to_type,
+                            to_type.to_z3_sort()?
+                        ),
+                    });
+                }
+                Ok((
+                    z3_expr,
+                    TExpr::Cast {
+                        expr: Box::new(new_expr),
+                        to_type: to_type.clone(),
+                    },
+                ))
+            }
         }
     }
 }

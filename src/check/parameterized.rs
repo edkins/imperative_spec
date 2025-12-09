@@ -116,6 +116,13 @@ impl TypeArg {
             }
         }
     }
+
+    pub fn contains_params(&self, param_list: &[String]) -> bool {
+        match self {
+            TypeArg::Bound(_) => false,
+            TypeArg::Type(t) => t.contains_params(param_list),
+        }
+    }
 }
 
 // impl ParameterizedType {
@@ -205,17 +212,30 @@ impl TypeArg {
 // }
 
 impl Type {
+    pub fn contains_params(&self, param_list: &[String]) -> bool {
+        if param_list.contains(&self.name) {
+            return true;
+        }
+        for arg in &self.type_args {
+            if arg.contains_params(param_list) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn unify(
         &self,
         concrete: &Type,
         mapping: &mut HashMap<String, Type>,
         param_list: &[String],
     ) -> Result<(), TypeError> {
-        self.most_general_type(param_list)?.unify_inner(
-            &concrete.most_general_type(param_list)?,
-            mapping,
-            param_list,
-        )
+        // self.most_general_type(param_list)?.unify_inner(
+        //     &concrete.most_general_type(param_list)?,
+        //     mapping,
+        //     param_list,
+        // )
+        self.unify_inner(concrete, mapping, param_list)
     }
 
     fn unify_inner(
@@ -224,6 +244,10 @@ impl Type {
         mapping: &mut HashMap<String, Type>,
         param_list: &[String],
     ) -> Result<(), TypeError> {
+        if !self.contains_params(param_list) && self.compatible_with(concrete) {
+            return Ok(());
+        }
+
         if param_list.contains(&self.name) {
             if let Some(mapped_type) = mapping.get(&self.name) {
                 if !mapped_type.compatible_with(concrete) {
@@ -243,7 +267,7 @@ impl Type {
         } else if concrete.name != self.name {
             return Err(TypeError {
                 message: format!(
-                    "Type name mismatch: expected {}, found {} (type variables: {:?})",
+                    "Unification: Type name mismatch: parameterized {}, concrete {} (type variables: {:?})",
                     self, concrete, param_list
                 ),
             });
@@ -392,6 +416,14 @@ impl TExpr {
                 Ok(TExpr::TupleAt {
                     tuple: Box::new(concrete_tuple),
                     index: *index,
+                })
+            }
+            TExpr::Cast { expr, to_type } => {
+                let concrete_expr = expr.instantiate(mapping)?;
+                let concrete_to_type = to_type.instantiate(mapping)?;
+                Ok(TExpr::Cast {
+                    expr: Box::new(concrete_expr),
+                    to_type: concrete_to_type,
                 })
             }
         }

@@ -29,6 +29,15 @@ impl TypeArg {
             TypeArg::Bound(_) => true,
         }
     }
+
+    fn as_type(&self) -> Result<Type, TypeError> {
+        match self {
+            TypeArg::Type(t) => Ok(t.clone()),
+            TypeArg::Bound(_) => Err(TypeError {
+                message: "Expected Type, found Bound".to_owned(),
+            }),
+        }
+    }
 }
 
 impl Type {
@@ -48,7 +57,7 @@ impl Type {
         }
     }
 
-    pub fn most_general_type(&self, param_list: &[String]) -> Result<Type, TypeError> {
+    fn most_general_type_same_size(&self, param_list: &[String]) -> Result<Type, TypeError> {
         if param_list.contains(&self.name) {
             if self.type_args.is_empty() {
                 Ok(Type {
@@ -63,16 +72,55 @@ impl Type {
                     ),
                 })
             }
-        } else if self.is_int() {
-            Ok(Type::basic("int"))
-        // } else if let Some(elem) = self.get_named_seq() {
-        //     let general_elem = elem.most_general_type(param_list)?;
-        //     Ok(Type {
-        //         name: "Seq".to_owned(),
-        //         type_args: vec![TypeArg::Type(general_elem)],
-        //     })
         } else {
-            Ok(self.clone())
+            match (self.name.as_str(), self.type_args.len()) {
+                ("u8" | "i8" | "z8", 0) => Ok(Type::basic("z8")),
+                ("u16" | "i16" | "z16", 0) => Ok(Type::basic("z16")),
+                ("u32" | "i32" | "z32", 0) => Ok(Type::basic("z32")),
+                ("u64" | "i64" | "z64", 0) => Ok(Type::basic("z64")),
+                ("int" | "nat", 0) => Ok(Type::basic("int")),
+                ("str", 0) => Ok(Type::basic("str")),
+                ("bool", 0) => Ok(Type::basic("bool")),
+                ("void", 0) => Ok(Type::basic("void")),
+                ("Tuple", _) => {
+                    let type_args = self.type_args.iter()
+                    .map(|ta| ta.as_type().and_then(|t| t.most_general_type_same_size(param_list)))
+                    .collect::<Result<Vec<Type>, TypeError>>()?;
+                    Ok(Type {
+                        name: "Tuple".to_owned(),
+                        type_args: type_args.into_iter().map(TypeArg::Type).collect(),
+                    })
+                }
+                ("Vec", 1) | ("Array", 2) => {
+                    // ignore size for Array
+                    let elem_type = self.type_args[0].as_type()?.most_general_type_same_size(param_list)?;
+                    Ok(Type {
+                        name: "Vec".to_owned(),
+                        type_args: vec![TypeArg::Type(elem_type)],
+                    })
+                }
+                ("Lambda", _) => {
+                    // Don't mess with lambdas for now
+                    Ok(self.clone())
+                }
+                _ => Err(TypeError {
+                    message: format!(
+                        "Cannot generalize unknown type {} to most general",
+                        self
+                    ),
+                }),
+            }
+        }
+    }
+
+    pub fn most_general_type(&self, param_list: &[String]) -> Result<Type, TypeError> {
+        if self.is_int() {
+            Ok(Type::basic("int"))
+        } else {
+            // TODO: do we need to special-case tuples here?
+            // Right now the most general form of (u32, u64) is (z32, z64) not (int, int)
+            let t = self.most_general_type_same_size(param_list)?;
+            Ok(t)
         }
     }
 
@@ -113,45 +161,49 @@ impl Type {
                 let (lower, upper) = lookup_int_bounds(&self.name);
                 Ok(bounds_to_expr(lower, upper, expr))
             }
-            "Vec" => {
-                if let &[TypeArg::Type(elem_type)] = &self.type_args.as_slice() {
-                    if let Some(lambda) = elem_type
-                        .type_lambda(&elem_type.most_general_type(param_list)?, param_list)?
-                    {
-                        Ok(vec![expr.seq_all(&lambda)?])
-                    } else {
-                        Ok(vec![])
-                    }
-                } else {
-                    Err(TypeError {
-                        message: format!(
-                            "Type {} should have exactly one type argument",
-                            self.name
-                        ),
-                    })
-                }
-            }
-            "Array" => {
-                if let &[TypeArg::Type(elem_type), TypeArg::Bound(array_size)] =
-                    &self.type_args.as_slice()
+            "Vec" | "Array" => {
+                // TODO: check array lens also
+                let new_type = self.most_general_type(param_list)?;
+                let elem_type = self.get_uniform_square_elem_type().ok_or_else(|| TypeError{
+                    message: format!(
+                        "Type {} should have exactly one type argument",
+                        self.name
+                    ),
+                })?;
+                let new_elem_type = new_type.get_uniform_square_elem_type().ok_or_else(|| TypeError{
+                    message: format!(
+                        "Type {} should have exactly one type argument",
+                        self.name
+                    ),
+                })?;
+                if let Some(lambda) = elem_type.type_lambda(&new_elem_type, param_list)?
                 {
-                    let size_expr = array_size.as_expr()?;
-                    let mut conds = vec![expr.seq_len()?.eq(&size_expr)?];
-                    if let Some(lambda) = elem_type
-                        .type_lambda(&elem_type.most_general_type(param_list)?, param_list)?
-                    {
-                        conds.push(expr.seq_all(&lambda)?);
-                    }
-                    Ok(conds)
+                    Ok(vec![expr.cast(new_type).seq_all(&lambda)?])
                 } else {
-                    Err(TypeError {
-                        message: format!(
-                            "Type {} should have exactly two type arguments",
-                            self.name
-                        ),
-                    })
+                    Ok(vec![])
                 }
             }
+            // "Array" => {
+            //     if let &[TypeArg::Type(elem_type), TypeArg::Bound(array_size)] =
+            //         &self.type_args.as_slice()
+            //     {
+            //         let size_expr = array_size.as_expr()?;
+            //         let mut conds = vec![expr.seq_len()?.eq(&size_expr)?];
+            //         if let Some(lambda) = elem_type
+            //             .type_lambda(&elem_type.most_general_type(param_list)?, param_list)?
+            //         {
+            //             conds.push(expr.seq_all(&lambda)?);
+            //         }
+            //         Ok(conds)
+            //     } else {
+            //         Err(TypeError {
+            //             message: format!(
+            //                 "Type {} should have exactly two type arguments",
+            //                 self.name
+            //             ),
+            //         })
+            //     }
+            // }
             "Tuple" => {
                 let mut conds = vec![];
                 let elem_types = self.get_round_elem_type_vector().ok_or(TypeError {

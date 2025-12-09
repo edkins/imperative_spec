@@ -254,6 +254,13 @@ impl TExpr {
                     index: *index,
                 }
             }
+            TExpr::Cast { expr, to_type } => {
+                let expr = expr.choose_optimization(env, &TypeExpectations::new(to_type));
+                TExpr::Cast {
+                    expr: Box::new(expr),
+                    to_type: to_type.clone(),
+                }
+            }
         }
     }
 }

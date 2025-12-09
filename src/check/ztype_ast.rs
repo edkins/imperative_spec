@@ -38,6 +38,10 @@ pub enum TExpr {
         tuple: Box<TExpr>,
         index: u64,
     },
+    Cast {
+        expr: Box<TExpr>,
+        to_type: Type,
+    },
 }
 
 #[derive(Clone)]
@@ -85,6 +89,7 @@ impl TExpr {
                 Type::lambda(&arg_types, &body.typ())
             }
             TExpr::TupleAt { tuple, index } => tuple.typ().get_round_elem_type(*index).unwrap().clone(),
+            TExpr::Cast { to_type, .. } => to_type.clone(),
         }
     }
 }
@@ -187,6 +192,9 @@ impl std::fmt::Display for TExpr {
             }
             TExpr::TupleAt { tuple, index } => {
                 write!(f, "{}.{}", tuple, index)
+            }
+            TExpr::Cast { expr, to_type } => {
+                write!(f, "({} as {})", expr, to_type)
             }
         }
     }

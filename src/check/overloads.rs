@@ -154,7 +154,7 @@ impl TFuncDef {
         let mut mapping = HashMap::new();
         for (arg_type, arg) in arg_types.iter().zip(&self.args) {
             arg.arg_type
-                .unify(arg_type, &mut mapping, &self.type_params)?;
+                .unify(arg_type, &mut mapping, &self.type_params).map_err(|e|e.with_context(&format!("... for function {}", self.name)))?;
         }
         for param in &self.type_params {
             if !mapping.contains_key(param) {
@@ -371,6 +371,13 @@ impl TExpr {
                 Ok(TExpr::TupleAt {
                     tuple: Box::new(new_tuple),
                     index: *index,
+                })
+            }
+            TExpr::Cast { expr, to_type } => {
+                let new_expr = expr.subst(mapping)?;
+                Ok(TExpr::Cast {
+                    expr: Box::new(new_expr),
+                    to_type: to_type.clone(),
                 })
             }
         }

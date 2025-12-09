@@ -77,6 +77,13 @@ impl TExpr {
             })
         }
     }
+
+    pub fn cast(&self, to_type: Type) -> TExpr {
+        TExpr::Cast {
+            expr: Box::new(self.clone()),
+            to_type,
+        }
+    }
 }
 
 impl Ops for TExpr {

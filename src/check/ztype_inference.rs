@@ -17,6 +17,14 @@ impl std::fmt::Display for TypeError {
 }
 impl std::error::Error for TypeError {}
 
+impl TypeError {
+    pub fn with_context(self, context: &str) -> TypeError {
+        TypeError {
+            message: format!("{} {}", context, self.message),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct TEnv {
     variables: HashMap<String, Type>,
