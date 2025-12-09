@@ -1,0 +1,4 @@
+fn main() {
+    let mut xs:[u8;4] = [1,2,3];
+    println("ok")
+}

@@ -1,4 +1,4 @@
 fn main() {
-    let mut xs:Vec<u64> = [1,2,3];
+    let mut xs:[u64] = [1,2,3];
     println("ok")
 }

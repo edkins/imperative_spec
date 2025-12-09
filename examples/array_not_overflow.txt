@@ -1,4 +1,4 @@
 fn main() {
-    let mut xs:Array<u8,4> = [1,2,3,255];
+    let mut xs:[u8;4] = [1,2,3,255];
     println("ok")
 }
