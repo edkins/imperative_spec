@@ -7,20 +7,20 @@ use crate::{
     syntax::ast::{Arg, Bound, Literal, Type, TypeArg},
 };
 
-impl Bound {
-    pub fn as_expr(&self) -> Result<TExpr, TypeError> {
-        match self {
-            Bound::I64(i) => Ok(TExpr::Literal(Literal::I64(*i))),
-            Bound::U64(u) => Ok(TExpr::Literal(Literal::U64(*u))),
-            Bound::MinusInfinity => Err(TypeError {
-                message: "Cannot convert -infinity to expression".to_owned(),
-            }),
-            Bound::PlusInfinity => Err(TypeError {
-                message: "Cannot convert +infinity to expression".to_owned(),
-            }),
-        }
-    }
-}
+// impl Bound {
+//     pub fn as_expr(&self) -> Result<TExpr, TypeError> {
+//         match self {
+//             Bound::I64(i) => Ok(TExpr::Literal(Literal::I64(*i))),
+//             Bound::U64(u) => Ok(TExpr::Literal(Literal::U64(*u))),
+//             Bound::MinusInfinity => Err(TypeError {
+//                 message: "Cannot convert -infinity to expression".to_owned(),
+//             }),
+//             Bound::PlusInfinity => Err(TypeError {
+//                 message: "Cannot convert +infinity to expression".to_owned(),
+//             }),
+//         }
+//     }
+// }
 
 impl TypeArg {
     fn condless(&self) -> bool {
@@ -176,12 +176,15 @@ impl Type {
                         self.name
                     ),
                 })?;
+                let mut conds = vec![];
+                if let Some(len) = self.get_square_seq_length() {
+                    conds.push(expr.cast(new_type.clone()).seq_len()?.eq(&TExpr::Literal(Literal::U64(len)))?);
+                }
                 if let Some(lambda) = elem_type.type_lambda(&new_elem_type, param_list)?
                 {
-                    Ok(vec![expr.cast(new_type).seq_all(&lambda)?])
-                } else {
-                    Ok(vec![])
+                    conds.push(expr.cast(new_type).seq_all(&lambda)?);
                 }
+                Ok(conds)
             }
             // "Array" => {
             //     if let &[TypeArg::Type(elem_type), TypeArg::Bound(array_size)] =
@@ -325,16 +328,16 @@ impl Type {
         }
     }
 
-    // pub fn get_square_seq_length(&self) -> Option<u64> {
-    //     if self.name == "Array" && self.type_args.len() == 2 {
-    //         match &self.type_args[1] {
-    //             TypeArg::Bound(Bound::U64(u)) => Some(*u),
-    //             _ => None,
-    //         }
-    //     } else {
-    //         None
-    //     }
-    // }
+    pub fn get_square_seq_length(&self) -> Option<u64> {
+        if self.name == "Array" && self.type_args.len() == 2 {
+            match &self.type_args[1] {
+                TypeArg::Bound(Bound::U64(u)) => Some(*u),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
 
     pub fn get_round_seq_length(&self) -> Option<u64> {
         if self.name == "Tuple" {
