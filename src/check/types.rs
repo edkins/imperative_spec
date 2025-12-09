@@ -1,5 +1,9 @@
 use crate::{
-    check::{ops::{Ops, big_and}, ztype_ast::TExpr, ztype_inference::TypeError},
+    check::{
+        ops::{Ops, big_and},
+        ztype_ast::TExpr,
+        ztype_inference::TypeError,
+    },
     syntax::ast::{Arg, Bound, Literal, Type, TypeArg},
 };
 

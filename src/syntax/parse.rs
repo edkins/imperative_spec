@@ -128,6 +128,18 @@ fn integer(input: &str) -> IResult<&str, Literal> {
     }
 }
 
+fn integer_u64(input: &str) -> IResult<&str, u64> {
+    let (input, literal) = integer(input)?;
+    match literal {
+        Literal::U64(v) => Ok((input, v)),
+        Literal::I64(v) if v >= 0 => Ok((input, v as u64)),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Digit,
+        ))),
+    }
+}
+
 fn normal_string_char(c: char) -> bool {
     c != '"' && c != '\\'
 }
@@ -313,6 +325,92 @@ fn typ_arg(input: &str) -> IResult<&str, TypeArg> {
 }
 
 fn typ(input: &str) -> IResult<&str, Type> {
+    alt((
+        delimited(
+            symbol(Symbol::OpenParen),
+            typ_parenthesized,
+            symbol(Symbol::CloseParen),
+        ),
+        delimited(
+            symbol(Symbol::OpenSquare),
+            typ_squared,
+            symbol(Symbol::CloseSquare),
+        ),
+        named_typ,
+    ))
+    .parse(input)
+}
+
+fn typ_parenthesized(input: &str) -> IResult<&str, Type> {
+    // separated_list1 because () is not a valid type (it's called `void` instead)
+    // TODO: should it be called void or ()?
+    let (input, type_args) = separated_list1(symbol(Symbol::Comma), typ).parse(input)?;
+    assert!(!type_args.is_empty());
+    if type_args.len() == 1 {
+        // (T,) or (T;n)
+        // Note that (T,) resolves to the same thing as (T;1)
+        // (T;0) resolves to void
+        let (input, length) = alt((
+            value(1u64, symbol(Symbol::Comma)),
+            preceded(symbol(Symbol::Semicolon), integer_u64),
+        ))
+        .parse(input)?;
+        let type_arg = type_args.into_iter().next().unwrap();
+        if length == 0 {
+            Ok((
+                input,
+                Type {
+                    name: "void".to_owned(),
+                    type_args: vec![],
+                },
+            ))
+        } else {
+            let type_args = vec![type_arg; length as usize]; // TODO: let's hope it's not stupidly long
+            Ok((
+                input,
+                Type {
+                    name: "Tuple".to_owned(),
+                    type_args: type_args.into_iter().map(TypeArg::Type).collect(),
+                },
+            ))
+        }
+    } else {
+        // (T1, T2...) optionally with a comma at the end
+        let (input, _) = opt(symbol(Symbol::Comma)).parse(input)?;
+        Ok((
+            input,
+            Type {
+                name: "Tuple".to_owned(),
+                type_args: type_args.into_iter().map(TypeArg::Type).collect(),
+            },
+        ))
+    }
+}
+
+fn typ_squared(input: &str) -> IResult<&str, Type> {
+    // This time I'm sure. [] is not a valid type name.
+    let (input, type_arg) = typ(input)?;
+    let (input, length) = opt(preceded(symbol(Symbol::Semicolon), integer_u64)).parse(input)?;
+    if let Some(length) = length {
+        Ok((
+            input,
+            Type {
+                name: "Array".to_owned(),
+                type_args: vec![TypeArg::Type(type_arg), TypeArg::Bound(Bound::U64(length))],
+            },
+        ))
+    } else {
+        Ok((
+            input,
+            Type {
+                name: "Vec".to_owned(),
+                type_args: vec![TypeArg::Type(type_arg)],
+            },
+        ))
+    }
+}
+
+fn named_typ(input: &str) -> IResult<&str, Type> {
     let (input, name) = identifier(input)?;
     let (input, type_args) = opt(delimited(
         symbol(Symbol::Lt),
@@ -355,11 +453,18 @@ fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
 
 fn expr_tight(input: &str) -> IResult<&str, Expr> {
     alt((
-        // expr_vec,  // ahead of variable_or_call to prefer parsing vec! over treating 'vec' as a variable
-        expr_array,
         variable_or_call,
         literal,
-        delimited(symbol(Symbol::OpenParen), expr, symbol(Symbol::CloseParen)),
+        delimited(
+            symbol(Symbol::OpenSquare),
+            expr_array_contents,
+            symbol(Symbol::CloseSquare),
+        ),
+        delimited(
+            symbol(Symbol::OpenParen),
+            expr_parenthesized,
+            symbol(Symbol::CloseParen),
+        ),
         delimited(symbol(Symbol::OpenBrace), expr, symbol(Symbol::CloseBrace)),
     ))
     .parse(input)
@@ -541,14 +646,43 @@ fn expr_semicolon(input: &str) -> IResult<&str, Expr> {
     }
 }
 
-fn expr_array(input: &str) -> IResult<&str, Expr> {
-    let (input, elements) = delimited(
-        symbol(Symbol::OpenSquare),
-        separated_list0(symbol(Symbol::Comma), expr_comma),
-        symbol(Symbol::CloseSquare),
-    )
-    .parse(input)?;
-    Ok((input, Expr::Sequence(elements)))
+fn expr_parenthesized(input: &str) -> IResult<&str, Expr> {
+    let (input, elems) = separated_list0(symbol(Symbol::Comma), expr_comma).parse(input)?;
+    if elems.is_empty() {
+        // ()
+        Ok((input, Expr::Literal(Literal::Unit)))
+    } else {
+        let (input, comma) = opt(symbol(Symbol::Comma)).parse(input)?;
+        if comma.is_some() || elems.len() > 1 {
+            // (x,) or (x,y...)
+            Ok((
+                input,
+                Expr::Sequence {
+                    square: false,
+                    elems,
+                },
+            ))
+        } else {
+            // (x)
+            Ok((input, elems.into_iter().next().unwrap()))
+        }
+    }
+}
+
+fn expr_array_contents(input: &str) -> IResult<&str, Expr> {
+    let (input, elems) = separated_list0(symbol(Symbol::Comma), expr_comma).parse(input)?;
+    let input = if !elems.is_empty() {
+        opt(symbol(Symbol::Comma)).parse(input)?.0
+    } else {
+        input
+    };
+    Ok((
+        input,
+        Expr::Sequence {
+            square: true,
+            elems,
+        },
+    ))
 }
 
 // fn expr_vec(input: &str) -> IResult<&str, Expr> {
@@ -593,11 +727,25 @@ fn stmt_let(input: &str) -> IResult<&str, Stmt> {
         }
         let (input, _) = symbol(Symbol::Assign)(input)?;
         let (input, value) = expr_comma(input)?;
-        Ok((input, Stmt::LetMut { name, typ: t.unwrap(), value }))
+        Ok((
+            input,
+            Stmt::LetMut {
+                name,
+                typ: t.unwrap(),
+                value,
+            },
+        ))
     } else {
         let (input, _) = symbol(Symbol::Assign)(input)?;
         let (input, value) = expr_comma(input)?;
-        Ok((input, Stmt::Let { name, typ: t, value }))
+        Ok((
+            input,
+            Stmt::Let {
+                name,
+                typ: t,
+                value,
+            },
+        ))
     }
 }
 

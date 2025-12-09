@@ -105,7 +105,7 @@ pub struct TFuncDef {
     pub return_type: Type,
     pub preconditions: Vec<TExpr>,
     pub postconditions: Vec<TExpr>,
-    pub body: Option<TExpr>,  // None for builtin funcs
+    pub body: Option<TExpr>, // None for builtin funcs
     pub optimizations: Vec<Optimization>,
     pub type_params: Vec<String>,
 }

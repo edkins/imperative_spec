@@ -139,7 +139,7 @@ impl Expr {
                 let texpr = expr.type_check(env)?;
                 Ok(TExpr::Semicolon(Box::new(tstmt.clone()), Box::new(texpr)))
             }
-            Expr::Sequence(elems) => {
+            Expr::Sequence { square, elems } => {
                 if elems.is_empty() {
                     Ok(TExpr::EmptySequence)
                 } else {
@@ -327,8 +327,7 @@ impl FuncDef {
 
     fn type_check(&self, env: &mut TEnv) -> Result<TFuncDef, TypeError> {
         let mut local_env = env.clone();
-        let decl = &env
-            .get_function(&self.name)?;
+        let decl = &env.get_function(&self.name)?;
         assert!(decl.args.len() == self.args.len());
         for (a, a2) in self.args.iter().zip(&decl.args) {
             if local_env.variables.contains_key(&a.name) {

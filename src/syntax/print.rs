@@ -134,15 +134,23 @@ impl Expr {
                 expr.fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
                 strength.close_brace(f, BindingStrength::Semicolon)
             }
-            Expr::Sequence(elements) => {
-                write!(f, "[")?;
-                for (i, element) in elements.iter().enumerate() {
+            Expr::Sequence { square, elems } => {
+                if *square {
+                    write!(f, "[")?;
+                } else {
+                    write!(f, "(")?;
+                }
+                for (i, element) in elems.iter().enumerate() {
                     element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
-                    if i != elements.len() - 1 {
+                    if i != elems.len() - 1 || !square && elems.len() == 1 {
                         write!(f, ", ")?;
                     }
                 }
-                write!(f, "]")
+                if *square {
+                    write!(f, "]")
+                } else {
+                    write!(f, ")")
+                }
             }
         }
     }

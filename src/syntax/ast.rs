@@ -44,7 +44,7 @@ pub enum Expr {
     Variable(String),
     Semicolon(Box<Stmt>, Box<Expr>),
     FunctionCall { name: String, args: Vec<Expr> },
-    Sequence(Vec<Expr>),
+    Sequence { square: bool, elems: Vec<Expr> },
 }
 
 #[derive(Clone, Copy)]

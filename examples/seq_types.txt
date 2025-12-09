@@ -1,0 +1,12 @@
+fn main() {
+    let really_void:(u8;0) = ();
+    let stuple:(u8,) = (255,);
+    let stuple2:(u8;1) = (255,);
+    let tuple:(u8,i8) = (255,-128);
+    let htuple:(u8;3) = (255,254,253,);
+    let evec:[u8] = [];
+    let earray:[u8;0] = [];
+    let vec:[u8] = [255,254,253,];
+    let array:[u8;4] = [255,254,253,252];
+    ()
+}

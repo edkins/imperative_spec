@@ -13,11 +13,7 @@ thread_local! {
     static BUILTIN_FUNCTIONS: HashMap<String, TFuncDef> = builtins();
 }
 
-fn insert_multiple(
-    map: &mut HashMap<String, TFuncDef>,
-    names: &[&str],
-    func: TFuncDef,
-) {
+fn insert_multiple(map: &mut HashMap<String, TFuncDef>, names: &[&str], func: TFuncDef) {
     for &name in names {
         if map.contains_key(name) {
             panic!("Builtin function {} defined multiple times", name);
@@ -50,8 +46,7 @@ fn args1(t0: &Type) -> Vec<Arg> {
 }
 
 pub fn known_builtin(name: &'static str) -> TFuncDef {
-    lookup_builtin(name)
-        .expect(&format!("Builtin function {} not found", name))
+    lookup_builtin(name).expect(&format!("Builtin function {} not found", name))
 }
 
 pub fn lookup_builtin(name: &str) -> Option<TFuncDef> {
@@ -186,7 +181,10 @@ fn builtins() -> HashMap<String, TFuncDef> {
                         preconditions: vec![],
                     },
                 ],
-                preconditions: vec![ne.make_func_call(&[tint.var("arg1"), TExpr::zero()]).unwrap()],
+                preconditions: vec![
+                    ne.make_func_call(&[tint.var("arg1"), TExpr::zero()])
+                        .unwrap(),
+                ],
                 attributes: vec![],
                 name: symbol.to_owned(),
                 return_name: "__ret__".to_owned(),

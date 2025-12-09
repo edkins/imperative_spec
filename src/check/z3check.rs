@@ -8,7 +8,10 @@ use std::{
 
 use crate::{
     check::{
-        builtins::lookup_builtin, optimization_chooser::OptimizationError, ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt}, ztype_inference::TypeError
+        builtins::lookup_builtin,
+        optimization_chooser::OptimizationError,
+        ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt},
+        ztype_inference::TypeError,
     },
     syntax::ast::*,
 };
@@ -93,9 +96,7 @@ impl TFuncDef {
             name: self.return_name.clone(),
             typ: self.return_type.clone(),
         };
-        let type_postconditions = self
-            .return_type
-            .type_assertions(return_var, &[])?;
+        let type_postconditions = self.return_type.type_assertions(return_var, &[])?;
         postconditions.extend(type_postconditions);
         Ok(postconditions)
     }
@@ -159,7 +160,10 @@ impl CheckedVar {
         assert!(!self.hidden);
         self.max_version += 1;
         self.version = self.max_version;
-        self.z3 = self.var_type.to_z3_const(&format!("{}:{}", self.name, self.version)).unwrap();
+        self.z3 = self
+            .var_type
+            .to_z3_const(&format!("{}:{}", self.name, self.version))
+            .unwrap();
     }
 
     fn replace(&mut self, mutable: bool, typ: &Type) {
@@ -168,7 +172,10 @@ impl CheckedVar {
         self.version = self.max_version;
         self.mutable = mutable;
         self.var_type = typ.clone();
-        self.z3 = self.var_type.to_z3_const(&format!("{}:{}", self.name, self.version)).unwrap();
+        self.z3 = self
+            .var_type
+            .to_z3_const(&format!("{}:{}", self.name, self.version))
+            .unwrap();
     }
 }
 
@@ -259,16 +266,28 @@ impl Env {
     }
 
     fn insert_var(&mut self, name: &str, mutable: bool, ty: &Type) -> Result<Dynamic, CheckError> {
-        Ok(self.vars
+        Ok(self
+            .vars
             .entry(name.to_owned())
             .and_modify(|info| info.replace(mutable, ty))
             .or_insert_with(|| CheckedVar::new(name, mutable, ty))
-            .z3.clone())
+            .z3
+            .clone())
     }
 
-    fn insert_var_with_value(&mut self, name: &str, ty: &Type, value: &Dynamic) -> Result<(), CheckError> {
-        assert!(!self.vars.contains_key(name), "Variable {} already defined", name);
-        self.vars.insert(name.to_owned(), CheckedVar::new_with_value(name, ty, value));
+    fn insert_var_with_value(
+        &mut self,
+        name: &str,
+        ty: &Type,
+        value: &Dynamic,
+    ) -> Result<(), CheckError> {
+        assert!(
+            !self.vars.contains_key(name),
+            "Variable {} already defined",
+            name
+        );
+        self.vars
+            .insert(name.to_owned(), CheckedVar::new_with_value(name, ty, value));
         Ok(())
     }
 
@@ -744,11 +763,11 @@ impl TExpr {
                 }
                 let ast = z3_function_call(name, &z3args, env)?;
                 let new_expr = TExpr::FunctionCall {
-                        name: name.clone(),
-                        args: newargs,
-                        return_type: func.return_type.clone(),
-                        optimizations: func.optimizations.clone(),
-                    };
+                    name: name.clone(),
+                    args: newargs,
+                    return_type: func.return_type.clone(),
+                    optimizations: func.optimizations.clone(),
+                };
 
                 let postconditions = func.postconditions_and_type_postconditions()?;
                 if !postconditions.is_empty() {
@@ -773,10 +792,7 @@ impl TExpr {
                     env.fold_in_assumptions(&new_env);
                 }
 
-                Ok((
-                    ast,
-                    new_expr,
-                ))
+                Ok((ast, new_expr))
             }
             TExpr::Semicolon(stmt, expr) => {
                 let new_stmt = stmt.z3_check(env)?;

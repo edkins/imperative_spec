@@ -29,7 +29,6 @@ pub struct Optimization {
     pub preconditions: Vec<TExpr>,
 }
 
-
 // #[derive(Clone)]
 // pub struct TOverloadedFunc {
 //     pub headline: TFunc,
@@ -114,7 +113,12 @@ impl TFuncDef {
         TFuncDef::psimple(name, arg_types, return_type, &[])
     }
 
-    pub fn psimple(name: &str, arg_types: &[Type], return_type: &Type, type_param_list: &[&str]) -> Self {
+    pub fn psimple(
+        name: &str,
+        arg_types: &[Type],
+        return_type: &Type,
+        type_param_list: &[&str],
+    ) -> Self {
         TFuncDef {
             attributes: vec![],
             name: name.to_owned(),
@@ -180,15 +184,13 @@ impl TFuncDef {
         })
     }
 
-    pub fn instantiate(
-        &self,
-        mapping: &HashMap<String, Type>,
-    ) -> Result<TFuncDef, TypeError> {
+    pub fn instantiate(&self, mapping: &HashMap<String, Type>) -> Result<TFuncDef, TypeError> {
         Ok(TFuncDef {
-            args: self.args
-                    .iter()
-                    .map(|t| t.instantiate(mapping))
-                    .collect::<Result<Vec<Arg>, TypeError>>()?,
+            args: self
+                .args
+                .iter()
+                .map(|t| t.instantiate(mapping))
+                .collect::<Result<Vec<Arg>, TypeError>>()?,
             return_type: self.return_type.instantiate(mapping)?,
             type_params: vec![],
             optimizations: self
@@ -204,11 +206,16 @@ impl TFuncDef {
             attributes: self.attributes.clone(),
             name: self.name.clone(),
             return_name: self.return_name.clone(),
-            postconditions: self.postconditions
+            postconditions: self
+                .postconditions
                 .iter()
                 .map(|e| e.instantiate(mapping))
                 .collect::<Result<Vec<TExpr>, TypeError>>()?,
-            body: self.body.as_ref().map(|b| b.instantiate(mapping)).transpose()?,
+            body: self
+                .body
+                .as_ref()
+                .map(|b| b.instantiate(mapping))
+                .transpose()?,
         })
     }
 

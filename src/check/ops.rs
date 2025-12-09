@@ -1,5 +1,9 @@
 use crate::{
-    check::{builtins::known_builtin, ztype_ast::{TExpr, TFuncDef}, ztype_inference::TypeError},
+    check::{
+        builtins::known_builtin,
+        ztype_ast::{TExpr, TFuncDef},
+        ztype_inference::TypeError,
+    },
     syntax::ast::{Arg, Literal, Type},
 };
 use std::slice::from_ref;
@@ -17,9 +21,8 @@ pub fn big_and(exprs: &[TExpr]) -> Result<TExpr, TypeError> {
 
 impl TFuncDef {
     pub fn make_func_call(&self, args: &[TExpr]) -> Result<TExpr, TypeError> {
-        let concrete = self.instantiate_from_types(
-            &args.iter().map(|a| a.typ()).collect::<Vec<Type>>(),
-        )?;
+        let concrete =
+            self.instantiate_from_types(&args.iter().map(|a| a.typ()).collect::<Vec<Type>>())?;
         Ok(TExpr::FunctionCall {
             name: self.name.to_owned(),
             args: args.to_owned(),
@@ -31,7 +34,7 @@ impl TFuncDef {
 
 /// Make this a trait (it's only implemented by one thing) to avoid accidentally
 /// calling it from builtins.rs
-pub trait Ops : Sized {
+pub trait Ops: Sized {
     fn eq(&self, other: &Self) -> Result<Self, TypeError>;
     #[allow(dead_code)]
     fn ne(&self, other: &Self) -> Result<Self, TypeError>;
