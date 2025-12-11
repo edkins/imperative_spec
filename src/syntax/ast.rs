@@ -41,7 +41,7 @@ pub enum Literal {
 #[derive(Clone)]
 pub enum Expr {
     Literal(Literal),
-    Variable(String),
+    Variable { name: String, typ: Option<Type> },
     Semicolon(Box<Stmt>, Box<Expr>),
     FunctionCall { name: String, args: Vec<Expr> },
     Sequence { square: bool, elems: Vec<Expr> },

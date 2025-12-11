@@ -122,7 +122,7 @@ impl Expr {
     fn type_check(&self, env: &mut TEnv, hint: Option<&Type>) -> Result<TExpr, TypeError> {
         match self {
             Expr::Literal(lit) => Ok(TExpr::Literal(lit.clone())),
-            Expr::Variable(x) => {
+            Expr::Variable{name:x, ..} => {
                 if let Some(typ) = env.variables.get(x) {
                     Ok(TExpr::Variable {
                         name: x.clone(),
@@ -315,7 +315,7 @@ impl TFuncAttribute {
                 let args = args
                     .iter()
                     .map(|arg| match arg {
-                        Expr::Variable(x) => Ok(x.clone()),
+                        Expr::Variable{name:x, ..} => Ok(x.clone()),
                         _ => Err(TypeError {
                             message: "check_decisions arguments must be u64 literals".to_owned(),
                         }),

@@ -126,7 +126,14 @@ impl Expr {
     ) -> std::fmt::Result {
         match self {
             Expr::Literal(literal) => write!(f, "{}", literal),
-            Expr::Variable(x) => write!(f, "{}", x),
+            Expr::Variable{name, typ} => {
+                write!(f, "{}", name)?;
+                if let Some(typ) = typ {
+                    write!(f, ":{}", typ)
+                } else {
+                    Ok(())
+                }
+            }
             Expr::FunctionCall { name, args } => match name as &str {
                 "==" | "!=" | "<" | "<=" | ">" | ">=" => {
                     strength.open_brace(f, BindingStrength::Comparison)?;
@@ -288,6 +295,13 @@ impl Display for SourceFile {
 mod test {
     use crate::syntax::ast::*;
 
+    fn v(name: &str) -> Expr {
+        Expr::Variable {
+            name: name.to_owned(),
+            typ: None,
+        }
+    }
+
     #[test]
     fn funcdef() {
         let func = FuncDef {
@@ -320,8 +334,8 @@ mod test {
             body: Expr::FunctionCall {
                 name: "sum".to_owned(),
                 args: vec![
-                    Expr::Variable("a".to_owned()),
-                    Expr::Variable("b".to_owned()),
+                    v("a"),
+                    v("b"),
                 ],
             },
         };
@@ -334,10 +348,10 @@ mod test {
     #[test]
     fn multiple_semicolons() {
         let semi = Expr::Semicolon(
-            Box::new(Stmt::Expr(Expr::Variable("x".to_owned()))),
+            Box::new(Stmt::Expr(v("x"))),
             Box::new(Expr::Semicolon(
-                Box::new(Stmt::Expr(Expr::Variable("y".to_owned()))),
-                Box::new(Expr::Variable("z".to_owned())),
+                Box::new(Stmt::Expr(v("y"))),
+                Box::new(v("z")),
             )),
         );
         let expected = "x;\ny;\nz";
@@ -368,14 +382,14 @@ mod test {
             body: Expr::FunctionCall {
                 name: "process".to_owned(),
                 args: vec![
-                    Expr::Variable("x".to_owned()),
+                    v("x"),
                     Expr::Semicolon(
                         Box::new(Stmt::Let {
                             name: "y".to_owned(),
                             typ: None,
                             value: Expr::Literal(Literal::I64(10)),
                         }),
-                        Box::new(Expr::Variable("y".to_owned())),
+                        Box::new(v("y")),
                     ),
                 ],
             },

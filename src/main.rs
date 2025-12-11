@@ -2,6 +2,7 @@ use clap::Parser;
 
 mod check;
 mod syntax;
+mod type_inference;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

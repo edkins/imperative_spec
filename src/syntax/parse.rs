@@ -307,7 +307,7 @@ fn variable_or_call(input: &str) -> IResult<&str, Expr> {
     let (input, call_opt) = opt(call_suffix(name.clone())).parse(input)?;
     match call_opt {
         Some(call_expr) => Ok((input, call_expr)),
-        None => Ok((input, Expr::Variable(name))),
+        None => Ok((input, Expr::Variable{name, typ:None})),
     }
 }
 

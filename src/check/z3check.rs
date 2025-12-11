@@ -1042,7 +1042,7 @@ fn z3_check_funcdef(
         }
     }
 
-    print!("Checked function: {}", func.name);
+    println!("Checked function: {}", func.name);
     Ok(TFuncDef {
         attributes,
         name: func.name.clone(),
