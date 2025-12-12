@@ -46,6 +46,7 @@ pub trait Ops: Sized {
     // fn seq_at(&self, index: &Self) -> Result<Self, TypeError>;
     fn add(&self, other: &Self) -> Result<Self, TypeError>;
     fn sub(&self, other: &Self) -> Result<Self, TypeError>;
+    fn mul(&self, other: &Self) -> Result<Self, TypeError>;
     fn ge(&self, other: &Self) -> Result<Self, TypeError>;
     fn le(&self, other: &Self) -> Result<Self, TypeError>;
 }
@@ -127,6 +128,10 @@ impl Ops for TExpr {
 
     fn sub(&self, other: &TExpr) -> Result<TExpr, TypeError> {
         known_builtin("-").make_func_call(&[self.clone(), other.clone()])
+    }
+
+    fn mul(&self, other: &TExpr) -> Result<TExpr, TypeError> {
+        known_builtin("*").make_func_call(&[self.clone(), other.clone()])
     }
 
     fn ge(&self, other: &TExpr) -> Result<TExpr, TypeError> {

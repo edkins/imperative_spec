@@ -204,7 +204,7 @@ impl AssignOp {
     fn mk_expr(&self, left: &TExpr, right: &TExpr) -> Result<TExpr, TypeError> {
         match self {
             AssignOp::Assign => Ok(right.clone()),
-            AssignOp::PlusAssign => {
+            AssignOp::AddAssign => {
                 if left.typ().is_int() && right.typ().is_int() {
                     left.add(right)
                 } else {
@@ -217,13 +217,26 @@ impl AssignOp {
                     })
                 }
             }
-            AssignOp::MinusAssign => {
+            AssignOp::SubAssign => {
                 if left.typ().is_int() && right.typ().is_int() {
                     left.sub(right)
                 } else {
                     Err(TypeError {
                         message: format!(
                             "MinusAssign requires integer types got {} and {}",
+                            left.typ(),
+                            right.typ()
+                        ),
+                    })
+                }
+            }
+            AssignOp::MulAssign => {
+                if left.typ().is_int() && right.typ().is_int() {
+                    left.mul(right)
+                } else {
+                    Err(TypeError {
+                        message: format!(
+                            "MulAssign requires integer types got {} and {}",
                             left.typ(),
                             right.typ()
                         ),

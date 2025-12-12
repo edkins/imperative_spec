@@ -56,6 +56,10 @@ pub fn lookup_builtin(name: &str) -> Option<TFuncDef> {
     BUILTIN_FUNCTIONS.with(|builtins| builtins.get(name).cloned())
 }
 
+pub fn all_builtins() -> HashMap<String, TFuncDef> {
+    BUILTIN_FUNCTIONS.with(|builtins| builtins.clone())
+}
+
 fn builtins() -> HashMap<String, TFuncDef> {
     // Don't call ops.rs directly here, or we'll end up with infinite recursion
     let mut functions = HashMap::new();
@@ -274,5 +278,59 @@ fn builtins() -> HashMap<String, TFuncDef> {
             body: None,
         }
     );
+    functions.insert(
+        "assign".to_owned(),
+        TFuncDef {
+            name: "assign".to_owned(),
+            args: vec![
+                Arg {
+                    name: "lhs".to_owned(),
+                    mutable: false,
+                    arg_type: tparam.clone(),
+                },
+                Arg {
+                    name: "rhs".to_owned(),
+                    mutable: false,
+                    arg_type: tparam.clone(),
+                },
+            ],
+            attributes: vec![],
+            return_name: "__ret__".to_owned(),
+            return_type: tvoid.clone(),
+            type_params: vec!["T".to_owned()],
+            optimizations: vec![],
+            preconditions: vec![],
+            postconditions: vec![],
+            body: None,
+        }
+    );
+    for name in ["add_assign","sub_assign","mul_assign"] {
+        functions.insert(
+            name.to_owned(),
+            TFuncDef {
+                name: name.to_owned(),
+                args: vec![
+                    Arg {
+                        name: "lhs".to_owned(),
+                        mutable: true,
+                        arg_type: tint.clone(),
+                    },
+                    Arg {
+                        name: "rhs".to_owned(),
+                        mutable: false,
+                        arg_type: tint.clone(),
+                    },
+                ],
+                attributes: vec![],
+                return_name: "__ret__".to_owned(),
+                return_type: tvoid.clone(),
+                type_params: vec![],
+                optimizations: vec![],
+                preconditions: vec![],
+                postconditions: vec![],
+                body: None,
+            }
+        );
+    }
     functions
 }

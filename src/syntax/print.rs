@@ -303,8 +303,9 @@ impl Display for Stmt {
             Stmt::Assign { name, op, value } => {
                 let op_str = match op {
                     AssignOp::Assign => "=",
-                    AssignOp::PlusAssign => "+=",
-                    AssignOp::MinusAssign => "-=",
+                    AssignOp::AddAssign => "+=",
+                    AssignOp::SubAssign => "-=",
+                    AssignOp::MulAssign => "*=",
                 };
                 write!(f, "{} {} ", name, op_str)?;
                 value.fmt_with_binding_strength(f, BindingStrength::PlusMinus)
@@ -338,6 +339,7 @@ mod test {
         let func = FuncDef {
             attributes: vec![],
             name: "add".to_string(),
+            type_params: vec![],
             args: vec![
                 Arg {
                     name: "a".to_owned(),
@@ -398,6 +400,7 @@ mod test {
         let func = FuncDef {
             attributes: vec![],
             name: "example".to_string(),
+            type_params: vec![],
             args: vec![Arg {
                 name: "x".to_owned(),
                 mutable: false,

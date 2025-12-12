@@ -21,6 +21,7 @@ pub struct Arg {
 pub struct FuncDef {
     pub attributes: Vec<Expr>,
     pub name: String,
+    pub type_params: Vec<String>,
     pub args: Vec<Arg>,
     pub return_name: Option<String>,
     pub return_type: Type,
@@ -52,8 +53,9 @@ pub enum Expr {
 #[derive(Clone, Copy)]
 pub enum AssignOp {
     Assign,
-    PlusAssign,
-    MinusAssign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
 }
 
 #[derive(Clone)]

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{check::ztype_inference::TypeError, syntax::ast::{Expr, Stmt, Type, TypeArg}};
+use crate::{check::{builtins::all_builtins, ztype_ast::TFuncDef, ztype_inference::TypeError}, syntax::ast::{AssignOp, Expr, FuncDef, SourceFile, Stmt, Type, TypeArg}};
 
 #[derive(Clone)]
 struct DeclaredFuncType {
@@ -9,7 +9,9 @@ struct DeclaredFuncType {
     type_params: Vec<String>,
 }
 
+#[derive(Clone)]
 struct TypeVars {
+    debug_func_name: String,
     counter: usize,
     expansions: HashMap<String, Type>,
     vars: HashMap<String, Type>,
@@ -55,11 +57,73 @@ struct FunctionGeneralizationResult {
     type_param_lookup: TypeParamLookup,
 }
 
+impl Type {
+    fn is_type_var(&self) -> bool {
+        self.name.starts_with('\'') && self.type_args.is_empty()
+    }
+
+    fn occurs_check(&self, var_name: &str) -> bool {
+        if self.is_type_var() && self.name == var_name {
+            return true;
+        }
+        for arg in &self.type_args {
+            match arg {
+                TypeArg::Type(t) => {
+                    if t.occurs_check(var_name) {
+                        return true;
+                    }
+                }
+                TypeArg::Bound(_) => {}
+            }
+        }
+        false
+    }
+}
+
 impl TypeVars {
     fn fresh_type_var(&mut self) -> String {
         let var_name = format!("'{}", self.counter);
         self.counter += 1;
         var_name
+    }
+
+    fn unify(&mut self, t0: &Type, t1: &Type) -> Result<(), TypeError> {
+        if t0 == t1 {
+            return Ok(());
+        }
+        if t0.is_type_var() {
+            if t1.occurs_check(&t0.name) {
+                return Err(TypeError{message: format!("Occurs check failed for type variable {}", t0.name)});
+            }
+            self.expansions.insert(t0.name.clone(), t1.clone());
+            return Ok(());
+        }
+        if t1.is_type_var() {
+            if t0.occurs_check(&t1.name) {
+                return Err(TypeError{message: format!("Occurs check failed for type variable {}", t1.name)});
+            }
+            self.expansions.insert(t1.name.clone(), t0.clone());
+            return Ok(());
+        }
+        if t0.name != t1.name || t0.type_args.len() != t1.type_args.len() {
+            return Err(TypeError{message: format!("Cannot unify types {} and {}", t0.name, t1.name)});
+        }
+        for (arg0, arg1) in t0.type_args.iter().zip(&t1.type_args) {
+            match (arg0, arg1) {
+                (TypeArg::Type(ta0), TypeArg::Type(ta1)) => {
+                    self.unify(ta0, ta1)?;
+                }
+                (TypeArg::Bound(b0), TypeArg::Bound(b1)) => {
+                    if b0 != b1 {
+                        return Err(TypeError{message: format!("Cannot unify bound type arguments {} and {}", b0, b1)});
+                    }
+                }
+                _ => {
+                    return Err(TypeError{message: format!("Cannot unify type arguments {} and {}", arg0, arg1)});
+                }
+            }
+        }
+        Ok(())
     }
 
     fn generalize_function(&mut self, func: &DeclaredFuncType) -> Result<FunctionGeneralizationResult, TypeError> {
@@ -90,7 +154,7 @@ impl TypeVars {
                     *typ = Some(t.clone());
                     t.clone()
                 } else {
-                    return Err(TypeError{message: format!("Unknown variable: {}", name)});
+                    return Err(TypeError{message: format!("Unknown variable: {} in function {}", name, self.debug_func_name)});
                 }
             }
             Expr::Semicolon(stmt, expr) => {
@@ -137,7 +201,7 @@ impl TypeVars {
         };
 
         if let Some(expected_type) = expected {
-            // Here we would check that expr's inferred type matches expected_type
+            self.unify(&actual_type, expected_type)?;
         }
         Ok(actual_type)
     }
@@ -148,21 +212,36 @@ impl TypeVars {
                 self.infer_expr(expr, None)?;
                 Ok(())
             }
-            Stmt::Let { name, mutable, typ, value } => {
-                let styp = typ.as_ref().map(|t| t.skeleton()).transpose()?;
+            Stmt::Let { name, typ, value, .. } => {
+                let styp = typ.as_ref().map(|t| t.skeleton(&[])).transpose()?;
                 let inferred = self.infer_expr(value, styp.as_ref())?;
                 self.vars.insert(name.clone(), inferred);
                 Ok(())
             }
-            Stmt::Assign { name, op: _, value } => {
-                let inferred = self.infer_expr(value, None)?;
-                if let Some(var_type) = self.vars.get(name) {
-                    // Here we would check that value's type matches var_type
-                    Ok(())
-                } else {
-                    Err(TypeError{message: format!("Unknown variable: {}", name)})
-                }
+            Stmt::Assign { name, op, value } => {
+                *stmt = Stmt::Expr(
+                    Expr::FunctionCall {
+                        name: op.function_name().to_owned(),
+                        args: vec![
+                            Expr::Variable { name: name.clone(), typ: None },
+                            value.clone(),
+                        ],
+                        type_instantiations: vec![],
+                    }
+                );
+                self.infer_stmt(stmt)
             }
+        }
+    }
+}
+
+impl AssignOp {
+    fn function_name(&self) -> &'static str {
+        match self {
+            AssignOp::Assign => "assign",
+            AssignOp::AddAssign => "add_assign",
+            AssignOp::SubAssign => "sub_assign",
+            AssignOp::MulAssign => "mul_assign",
         }
     }
 }
@@ -173,31 +252,117 @@ impl Type {
     /// Vec<u32> -> Vec<int>
     /// (u32,u64,bool) -> (int,int,bool)
     /// etc.
-    fn skeleton(&self) -> Result<Type, TypeError> {
-        match self.name.as_str() {
-            "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "nat" => Ok(Type::basic("int")),
-            "bool" | "int" | "str" | "void" => Ok(self.clone()),
-            "Vec" | "Array" | "Tuple" => {
+    fn skeleton(&self, type_params: &[String]) -> Result<Type, TypeError> {
+        match (self.name.as_str(), self.type_args.len()) {
+            ("u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "nat", 0) => Ok(Type::basic("int")),
+            ("bool" | "int" | "str" | "void", 0) => Ok(self.clone()),
+            ("Array", 2) => {
+                Ok(Type {
+                    name: "Vec".to_owned(),
+                    type_args: vec![self.type_args[0].skeleton(type_params)?],
+                })
+            }
+            ("Vec",1) | ("Tuple", _) | ("Lambda", _) => {
                 let skel_args = self
                     .type_args
                     .iter()
-                    .map(|arg| arg.skeleton())
+                    .map(|arg| arg.skeleton(type_params))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Type {
                     name: self.name.clone(),
                     type_args: skel_args,
                 })
             }
-            _ => Err(TypeError{message: format!("Unknown type: {}", self.name)}),
+            _ => {
+                if type_params.contains(&self.name) {
+                    Ok(Type::basic(&self.name))
+                } else {
+                    Err(TypeError{message: format!("Unknown type: {}", self.name)})
+                }
+            }
         }
     }
 }
 
 impl TypeArg {
-    fn skeleton(&self) -> Result<TypeArg, TypeError> {
+    fn skeleton(&self, type_params: &[String]) -> Result<TypeArg, TypeError> {
         match self {
-            TypeArg::Type(typ) => Ok(TypeArg::Type(typ.skeleton()?)),
+            TypeArg::Type(typ) => Ok(TypeArg::Type(typ.skeleton(type_params)?)),
             TypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
         }
     }
+}
+
+impl FuncDef {
+    fn skeleton(&self) -> Result<DeclaredFuncType, TypeError> {
+        let skel_params = self
+            .args
+            .iter()
+            .map(|p| p.arg_type.skeleton(&self.type_params))
+            .collect::<Result<Vec<_>, _>>()?;
+        let skel_ret_type = self.return_type.skeleton(&self.type_params)?;
+        Ok(DeclaredFuncType {
+            arg_types: skel_params,
+            ret_type: skel_ret_type,
+            type_params: self.type_params.clone(),
+        })
+    }
+}
+
+impl TFuncDef {
+    fn skeleton(&self) -> Result<DeclaredFuncType, TypeError> {
+        let skel_params = self
+            .args
+            .iter()
+            .map(|p| p.arg_type.skeleton(&self.type_params))
+            .collect::<Result<Vec<_>, _>>()?;
+        let skel_ret_type = self.return_type.skeleton(&self.type_params)?;
+        Ok(DeclaredFuncType {
+            arg_types: skel_params,
+            ret_type: skel_ret_type,
+            type_params: self.type_params.clone(),
+        })
+    }
+}
+
+pub fn hindley_milner_infer(source_file: &mut SourceFile, verbosity: u8) -> Result<(), TypeError> {
+    let mut type_vars = TypeVars {
+        debug_func_name: "".to_owned(),
+        counter: 0,
+        expansions: HashMap::new(),
+        vars: HashMap::new(),
+        functions: HashMap::new(),
+    };
+
+    // Register builtin functions
+    for builtin in all_builtins().values() {
+        let declared_type = builtin.skeleton()?;
+        type_vars.functions.insert(builtin.name.clone(), declared_type);
+    }
+
+    // First, register all function declarations
+    for func in &source_file.functions {
+        let declared_type = func.skeleton()?;
+        type_vars.functions.insert(func.name.clone(), declared_type);
+    }
+
+    // Now infer types for each function body
+    for func in &mut source_file.functions.clone() {
+        let mut local_type_vars = type_vars.clone();
+        local_type_vars.debug_func_name = func.name.clone();
+        let funcdef = type_vars.functions.get(&func.name).unwrap().clone();
+        assert!(funcdef.arg_types.len() == func.args.len());
+        for (param, arg) in funcdef.arg_types.iter().zip(&func.args) {
+            local_type_vars.vars.insert(arg.name.clone(), param.clone());
+        }
+        local_type_vars.infer_expr(&mut func.body, Some(&funcdef.ret_type))?;
+        if verbosity >= 2 {
+            println!("Inferred types for function {}:", func.name);
+            for (var, typ) in &local_type_vars.vars {
+                println!("  {} : {}", var, typ);
+            }
+        }
+    }
+
+    Ok(())
 }

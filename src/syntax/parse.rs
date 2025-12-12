@@ -42,8 +42,9 @@ enum Symbol {
     Slash,
     EqualEqual,
     NotEqual,
-    PlusAssign,
-    MinusAssign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
     Lt,
     Le,
     Gt,
@@ -221,8 +222,9 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "*" => Ok((input, Symbol::Star)),
         "!=" => Ok((input, Symbol::NotEqual)),
         "==" => Ok((input, Symbol::EqualEqual)),
-        "+=" => Ok((input, Symbol::PlusAssign)),
-        "-=" => Ok((input, Symbol::MinusAssign)),
+        "+=" => Ok((input, Symbol::AddAssign)),
+        "-=" => Ok((input, Symbol::SubAssign)),
+        "*=" => Ok((input, Symbol::MulAssign)),
         "<" => Ok((input, Symbol::Lt)),
         "<=" => Ok((input, Symbol::Le)),
         ">" => Ok((input, Symbol::Gt)),
@@ -749,8 +751,9 @@ fn stmt_let(input: &str) -> IResult<&str, Stmt> {
 fn assignop(input: &str) -> IResult<&str, AssignOp> {
     alt((
         value(AssignOp::Assign, symbol(Symbol::Assign)),
-        value(AssignOp::PlusAssign, symbol(Symbol::PlusAssign)),
-        value(AssignOp::MinusAssign, symbol(Symbol::MinusAssign)),
+        value(AssignOp::AddAssign, symbol(Symbol::AddAssign)),
+        value(AssignOp::SubAssign, symbol(Symbol::SubAssign)),
+        value(AssignOp::MulAssign, symbol(Symbol::MulAssign)),
     ))
     .parse(input)
 }
@@ -871,6 +874,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         FuncDef {
             attributes,
             name,
+            type_params: vec![],
             args,
             return_name,
             return_type,
