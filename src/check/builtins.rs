@@ -29,10 +29,12 @@ fn args2(t0: &Type, t1: &Type) -> Vec<Arg> {
     vec![
         Arg {
             name: "arg0".to_owned(),
+            mutable: false,
             arg_type: t0.clone(),
         },
         Arg {
             name: "arg1".to_owned(),
+            mutable: false,
             arg_type: t1.clone(),
         },
     ]
@@ -41,6 +43,7 @@ fn args2(t0: &Type, t1: &Type) -> Vec<Arg> {
 fn args1(t0: &Type) -> Vec<Arg> {
     vec![Arg {
         name: "arg0".to_owned(),
+        mutable: false,
         arg_type: t0.clone(),
     }]
 }

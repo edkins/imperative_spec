@@ -134,7 +134,7 @@ impl Expr {
                     Ok(())
                 }
             }
-            Expr::FunctionCall { name, args } => match name as &str {
+            Expr::FunctionCall { name, args, type_instantiations } => match name as &str {
                 "==" | "!=" | "<" | "<=" | ">" | ">=" => {
                     strength.open_brace(f, BindingStrength::Comparison)?;
                     args[0].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
@@ -150,7 +150,18 @@ impl Expr {
                     strength.close_brace(f, BindingStrength::PlusMinus)
                 }
                 _ => {
-                    write!(f, "{}(", name)?;
+                    write!(f, "{}", name)?;
+                    if !type_instantiations.is_empty() {
+                        write!(f, "<")?;
+                        for (i, typ) in type_instantiations.iter().enumerate() {
+                            write!(f, "{}", typ)?;
+                            if i != type_instantiations.len() - 1 {
+                                write!(f, ",")?;
+                            }
+                        }
+                        write!(f, ">")?;
+                    }
+                    write!(f, "(")?;
                     for (i, arg) in args.iter().enumerate() {
                         arg.fmt_with_binding_strength(f, BindingStrength::Comma)?;
                         if i != args.len() - 1 {
@@ -167,23 +178,28 @@ impl Expr {
                 expr.fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
                 strength.close_brace(f, BindingStrength::Semicolon)
             }
-            Expr::Sequence { square, elems } => {
-                if *square {
-                    write!(f, "[")?;
-                } else {
-                    write!(f, "(")?;
-                }
+            Expr::SquareSequence { elems, elem_type } => {
+                write!(f, "[")?;
                 for (i, element) in elems.iter().enumerate() {
                     element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
-                    if i != elems.len() - 1 || !square && elems.len() == 1 {
+                    if i != elems.len() - 1 {
                         write!(f, ", ")?;
                     }
                 }
-                if *square {
-                    write!(f, "]")
-                } else {
-                    write!(f, ")")
+                if let Some(typ) = elem_type {
+                    write!(f, ":{}", typ)?;
                 }
+                write!(f, "]")
+            }
+            Expr::RoundSequence { elems } => {
+                write!(f, "(")?;
+                for (i, element) in elems.iter().enumerate() {
+                    element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                    if i != elems.len() - 1 || elems.len() == 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
             }
         }
     }
@@ -201,6 +217,16 @@ impl std::fmt::Debug for Expr {
     }
 }
 
+impl Display for Arg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.mutable {
+            write!(f, "mut {}: {}", self.name, self.arg_type)
+        } else {
+            write!(f, "{}: {}", self.name, self.arg_type)
+        }
+    }
+}
+
 impl Display for FuncDef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for attrib in &self.attributes {
@@ -208,7 +234,7 @@ impl Display for FuncDef {
         }
         write!(f, "fn {}(", self.name)?;
         for (i, arg) in self.args.iter().enumerate() {
-            write!(f, "{}: {}", arg.name, arg.arg_type)?;
+            write!(f, "{}", arg)?;
             if i != self.args.len() - 1 {
                 write!(f, ", ")?;
             }
@@ -259,15 +285,20 @@ impl Display for Stmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Stmt::Expr(expr) => write!(f, "{}", expr),
-            Stmt::Let { name, typ, value } => {
+            Stmt::Let { name, mutable, typ, value } => {
                 if let Some(typ) = typ {
-                    write!(f, "let {}: {} = {}", name, typ, value)
+                    if *mutable {
+                        write!(f, "let mut {}: {} = {}", name, typ, value)
+                    } else {
+                        write!(f, "let {}: {} = {}", name, typ, value)
+                    }
                 } else {
-                    write!(f, "let {} = {}", name, value)
+                    if *mutable {
+                        write!(f, "let mut {} = {}", name, value)
+                    } else {
+                        write!(f, "let {} = {}", name, value)
+                    }
                 }
-            }
-            Stmt::LetMut { name, typ, value } => {
-                write!(f, "let mut {}: {} = {}", name, typ, value)
             }
             Stmt::Assign { name, op, value } => {
                 let op_str = match op {
@@ -310,6 +341,7 @@ mod test {
             args: vec![
                 Arg {
                     name: "a".to_owned(),
+                    mutable: false,
                     arg_type: Type {
                         name: "i32".to_owned(),
                         type_args: vec![],
@@ -317,6 +349,7 @@ mod test {
                 },
                 Arg {
                     name: "b".to_owned(),
+                    mutable: false,
                     arg_type: Type {
                         name: "i32".to_owned(),
                         type_args: vec![],
@@ -337,6 +370,7 @@ mod test {
                     v("a"),
                     v("b"),
                 ],
+                type_instantiations: vec![],
             },
         };
 
@@ -366,6 +400,7 @@ mod test {
             name: "example".to_string(),
             args: vec![Arg {
                 name: "x".to_owned(),
+                mutable: false,
                 arg_type: Type {
                     name: "i32".to_owned(),
                     type_args: vec![],
@@ -386,12 +421,14 @@ mod test {
                     Expr::Semicolon(
                         Box::new(Stmt::Let {
                             name: "y".to_owned(),
+                            mutable: false,
                             typ: None,
                             value: Expr::Literal(Literal::I64(10)),
                         }),
                         Box::new(v("y")),
                     ),
                 ],
+                type_instantiations: vec![],
             },
         };
 

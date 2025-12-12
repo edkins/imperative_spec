@@ -434,6 +434,7 @@ impl Arg {
     pub fn instantiate(&self, mapping: &HashMap<String, Type>) -> Result<Arg, TypeError> {
         Ok(Arg {
             name: self.name.clone(),
+            mutable: self.mutable,
             arg_type: self.arg_type.instantiate(mapping)?,
         })
     }

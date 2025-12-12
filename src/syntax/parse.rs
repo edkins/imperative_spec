@@ -435,6 +435,7 @@ fn call_suffix(name: String) -> impl Fn(&str) -> IResult<&str, Expr> {
             Expr::FunctionCall {
                 name: name.clone(),
                 args,
+                type_instantiations: vec![],
             },
         ))
     }
@@ -477,6 +478,7 @@ fn expr_prefixed(input: &str) -> IResult<&str, Expr> {
             map(expr_prefixed, |e| Expr::FunctionCall {
                 name: "neg".to_owned(),
                 args: vec![e],
+                type_instantiations: vec![],
             }),
         ),
         expr_tight,
@@ -521,6 +523,7 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
                 let new_expr = Expr::FunctionCall {
                     name: "*".to_owned(),
                     args: vec![exprs.clone(), rhs],
+                    type_instantiations: vec![],
                 };
                 exprs = new_expr;
             }
@@ -528,6 +531,7 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
                 let new_expr = Expr::FunctionCall {
                     name: "/".to_owned(),
                     args: vec![exprs.clone(), rhs],
+                    type_instantiations: vec![],
                 };
                 exprs = new_expr;
             }
@@ -535,6 +539,7 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
                 let new_expr = Expr::FunctionCall {
                     name: "%".to_owned(),
                     args: vec![exprs.clone(), rhs],
+                    type_instantiations: vec![],
                 };
                 exprs = new_expr;
             }
@@ -557,6 +562,7 @@ fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
                 let new_expr = Expr::FunctionCall {
                     name: "+".to_owned(),
                     args: vec![exprs.clone(), rhs],
+                    type_instantiations: vec![],
                 };
                 exprs = new_expr;
             }
@@ -564,6 +570,7 @@ fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
                 let new_expr = Expr::FunctionCall {
                     name: "-".to_owned(),
                     args: vec![exprs.clone(), rhs],
+                    type_instantiations: vec![],
                 };
                 exprs = new_expr;
             }
@@ -594,6 +601,7 @@ fn expr_cmp(input: &str) -> IResult<&str, Expr> {
             let new_expr = Expr::FunctionCall {
                 name: cmpop_to_function_name(sym).to_owned(),
                 args: vec![expr, rhs],
+                type_instantiations: vec![],
             };
             Ok((input, new_expr))
         }
@@ -610,6 +618,7 @@ fn expr_conjunction(input: &str) -> IResult<&str, Expr> {
             let new_expr = Expr::FunctionCall {
                 name: "&&".to_owned(),
                 args: vec![expr, rhs],
+                type_instantiations: vec![],
             };
             Ok((input, new_expr))
         }
@@ -626,6 +635,7 @@ fn expr_disjunction(input: &str) -> IResult<&str, Expr> {
             let new_expr = Expr::FunctionCall {
                 name: "||".to_owned(),
                 args: vec![expr, rhs],
+                type_instantiations: vec![],
             };
             Ok((input, new_expr))
         }
@@ -657,8 +667,7 @@ fn expr_parenthesized(input: &str) -> IResult<&str, Expr> {
             // (x,) or (x,y...)
             Ok((
                 input,
-                Expr::Sequence {
-                    square: false,
+                Expr::RoundSequence {
                     elems,
                 },
             ))
@@ -678,9 +687,9 @@ fn expr_array_contents(input: &str) -> IResult<&str, Expr> {
     };
     Ok((
         input,
-        Expr::Sequence {
-            square: true,
+        Expr::SquareSequence {
             elems,
+            elem_type: None,
         },
     ))
 }
@@ -718,35 +727,23 @@ fn stmt_let(input: &str) -> IResult<&str, Stmt> {
     let (input, mutable) = opt(keyword(Word::Mut)).parse(input)?;
     let (input, name) = identifier(input)?;
     let (input, t) = opt(preceded(symbol(Symbol::Colon), typ)).parse(input)?;
-    if mutable.is_some() {
-        if t.is_none() {
-            return Err(nom::Err::Error(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Tag,
-            )));
-        }
-        let (input, _) = symbol(Symbol::Assign)(input)?;
-        let (input, value) = expr_comma(input)?;
-        Ok((
+    if mutable.is_some() && t.is_none() {
+        return Err(nom::Err::Error(nom::error::Error::new(
             input,
-            Stmt::LetMut {
-                name,
-                typ: t.unwrap(),
-                value,
-            },
-        ))
-    } else {
-        let (input, _) = symbol(Symbol::Assign)(input)?;
-        let (input, value) = expr_comma(input)?;
-        Ok((
-            input,
-            Stmt::Let {
-                name,
-                typ: t,
-                value,
-            },
-        ))
+            nom::error::ErrorKind::Tag,
+        )));
     }
+    let (input, _) = symbol(Symbol::Assign)(input)?;
+    let (input, value) = expr_comma(input)?;
+    Ok((
+        input,
+        Stmt::Let {
+            name,
+            mutable: mutable.is_some(),
+            typ: t,
+            value,
+        },
+    ))
 }
 
 fn assignop(input: &str) -> IResult<&str, AssignOp> {
@@ -784,7 +781,7 @@ fn arg(input: &str) -> IResult<&str, Arg> {
     let (input, name) = identifier(input)?;
     let (input, _) = symbol(Symbol::Colon)(input)?;
     let (input, arg_type) = typ(input)?;
-    Ok((input, Arg { name, arg_type }))
+    Ok((input, Arg { name, mutable: false, arg_type }))
 }
 
 fn named_ret(input: &str) -> IResult<&str, (Option<String>, Type)> {

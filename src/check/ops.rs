@@ -155,10 +155,12 @@ fn and_lambda() -> TExpr {
         args: vec![
             Arg {
                 name: var0.clone(),
+                mutable: false,
                 arg_type: Type::basic("bool"),
             },
             Arg {
                 name: var1.clone(),
+                mutable: false,
                 arg_type: Type::basic("bool"),
             },
         ],

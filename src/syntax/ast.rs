@@ -13,6 +13,7 @@ pub enum TypeArg {
 #[derive(Clone)]
 pub struct Arg {
     pub name: String,
+    pub mutable: bool,
     pub arg_type: Type,
 }
 
@@ -43,8 +44,9 @@ pub enum Expr {
     Literal(Literal),
     Variable { name: String, typ: Option<Type> },
     Semicolon(Box<Stmt>, Box<Expr>),
-    FunctionCall { name: String, args: Vec<Expr> },
-    Sequence { square: bool, elems: Vec<Expr> },
+    FunctionCall { name: String, args: Vec<Expr>, type_instantiations: Vec<Type> },
+    SquareSequence { elems: Vec<Expr>, elem_type: Option<Type> },
+    RoundSequence { elems: Vec<Expr> },
 }
 
 #[derive(Clone, Copy)]
@@ -59,12 +61,8 @@ pub enum Stmt {
     Expr(Expr),
     Let {
         name: String,
+        mutable: bool,
         typ: Option<Type>,
-        value: Expr,
-    },
-    LetMut {
-        name: String,
-        typ: Type,
         value: Expr,
     },
     Assign {

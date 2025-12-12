@@ -134,7 +134,7 @@ impl Expr {
                     })
                 }
             }
-            Expr::FunctionCall { name, args } => {
+            Expr::FunctionCall { name, args, .. } => {
                 let funcdef = env.get_function(name)?;
                 if args.len() != funcdef.args.len() {
                     return Err(TypeError {
@@ -158,19 +158,18 @@ impl Expr {
                 let texpr = expr.type_check(env, hint)?;
                 Ok(TExpr::Semicolon(Box::new(tstmt.clone()), Box::new(texpr)))
             }
-            Expr::Sequence { square, elems } => {
+            Expr::SquareSequence { elems, .. } => {
                 if hint.is_none() {
                     return Err(TypeError {
-                        message: "Type hint required for sequence expressions".to_owned(),
+                        message: "Type hint required for square sequence expressions".to_owned(),
                     });
                 }
                 let hint = hint.unwrap();
-                if *square != hint.is_square_seq() {
+                if !hint.is_square_seq() {
                     return Err(TypeError {
                         message: format!(
-                            "Sequence square type mismatch: expected square={}, got square={}",
-                            hint.is_square_seq(),
-                            square
+                            "Square sequence type mismatch: expected {}, got square sequence",
+                            hint,
                         ),
                     });
                 }
@@ -182,6 +181,19 @@ impl Expr {
                 Ok(TExpr::Sequence {
                     elements,
                     sequence_type: hint.clone(),
+                })
+            }
+            Expr::RoundSequence { elems } => {
+                let elements = elems
+                    .iter()
+                    .map(|e| e.type_check(env, None))
+                    .collect::<Result<Vec<TExpr>, TypeError>>()?;
+                Ok(TExpr::Sequence {
+                    elements: elements.clone(),
+                    sequence_type: Type {
+                        name: "Tuple".to_owned(),
+                        type_args: elements.iter().map(|e| TypeArg::Type(e.typ())).collect(),
+                    },
                 })
             }
         }
@@ -229,7 +241,7 @@ impl Stmt {
                 let te = e.type_check(env, None)?;
                 Ok(TStmt::Expr(te))
             }
-            Stmt::Let { name, typ, value } => {
+            Stmt::Let { name, mutable, typ, value } => {
                 let tvalue = value.type_check(env, typ.as_ref())?;
                 let vtype = if let Some(typ) = typ {
                     if !tvalue.typ().compatible_with(typ) {
@@ -250,29 +262,8 @@ impl Stmt {
                 Ok(TStmt::Let {
                     name: name.clone(),
                     typ: vtype,
-                    mutable: false,
+                    mutable: *mutable,
                     type_declared: typ.is_some(),
-                    value: tvalue,
-                })
-            }
-            Stmt::LetMut { name, typ, value } => {
-                let tvalue = value.type_check(env, Some(typ))?;
-                if !tvalue.typ().compatible_with(typ) {
-                    return Err(TypeError {
-                        message: format!(
-                            "Type of value {} does not match declared type {} for variable {}",
-                            tvalue.typ(),
-                            typ,
-                            name
-                        ),
-                    });
-                }
-                env.variables.insert(name.clone(), typ.clone());
-                Ok(TStmt::Let {
-                    name: name.clone(),
-                    typ: typ.clone(),
-                    mutable: true,
-                    type_declared: true,
                     value: tvalue,
                 })
             }
@@ -311,7 +302,7 @@ impl Stmt {
 impl TFuncAttribute {
     fn from_expr(expr: &Expr) -> Result<TFuncAttribute, TypeError> {
         match expr {
-            Expr::FunctionCall { name, args } if name == "check_decisions" => {
+            Expr::FunctionCall { name, args, .. } if name == "check_decisions" => {
                 let args = args
                     .iter()
                     .map(|arg| match arg {
@@ -406,6 +397,7 @@ impl FuncDef {
             .zip(&decl.args)
             .map(|(a, a2)| Arg {
                 name: a.name.clone(),
+                mutable: a.mutable,
                 arg_type: a2.arg_type.clone(),
             })
             .collect::<Vec<_>>();

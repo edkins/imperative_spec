@@ -473,6 +473,7 @@ impl Type {
         Ok(Some(TExpr::Lambda {
             args: vec![Arg {
                 name: "__item__".to_owned(),
+                mutable: false,
                 arg_type: more_general_type.clone(),
             }],
             body: Box::new(big_and(&conds).unwrap()),

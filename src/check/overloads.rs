@@ -129,6 +129,7 @@ impl TFuncDef {
                 .enumerate()
                 .map(|(i, t)| Arg {
                     name: format!("arg{}", i),
+                    mutable: false,
                     arg_type: t.clone(),
                 })
                 .collect::<Vec<Arg>>(),
