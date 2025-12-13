@@ -353,6 +353,7 @@ impl Type {
                 if *self == self.skeleton(param_list)? {
                     Ok(vec![])
                 } else {
+                    panic!();
                     Err(TypeError {
                         message: format!(
                             "Cannot generate type assertions for conditioned lambda type {}",
@@ -653,6 +654,106 @@ impl Literal {
             Literal::I64(_) => Type::basic("int"),
             Literal::Str(_) => Type::basic("str"),
             Literal::Bool(_) => Type::basic("bool"),
+        }
+    }
+}
+
+impl Type {
+    /// Strip out type constraints and just return the type that z3/hindley-milner can work with
+    /// u32 -> int
+    /// Vec<u32> -> Vec<int>
+    /// (u32,u64,bool) -> (int,int,bool)
+    /// etc.
+    pub fn skeleton(&self, type_params: &[String]) -> Result<Type, TypeError> {
+        match (self.name.as_str(), self.type_args.len()) {
+            ("u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "nat", 0) => {
+                Ok(Type::basic("int"))
+            }
+            ("bool" | "int" | "str" | "void", 0) => Ok(self.clone()),
+            ("Array", 2) => Ok(Type {
+                name: "Vec".to_owned(),
+                type_args: vec![self.type_args[0].skeleton(type_params)?],
+            }),
+            ("Vec", 1) | ("Tuple", _) | ("Lambda", _) => {
+                let skel_args = self
+                    .type_args
+                    .iter()
+                    .map(|arg| arg.skeleton(type_params))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Type {
+                    name: self.name.clone(),
+                    type_args: skel_args,
+                })
+            }
+            _ => {
+                if type_params.contains(&self.name) {
+                    Ok(Type::basic(&self.name))
+                } else {
+                    Err(TypeError {
+                        message: format!("Unknown type: {}", self.name),
+                    })
+                }
+            }
+        }
+    }
+
+    pub fn narrowings(&self) -> Result<Vec<Type>, TypeError> {
+        if self.is_int() {
+            return [
+                "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "nat", "int"
+            ].iter().map(|&t| Ok(Type::basic(t))).collect();
+        } else if self.is_square_seq() {
+            let elem_type = self.uniform_square_elem_type()?;
+            elem_type.narrowings()?.iter().map(|t| Ok(Type{
+                name: "Vec".to_owned(),
+                type_args: vec![TypeArg::Type(t.clone())],
+            })).collect()
+        } else if self.is_round_seq() {
+            let elem_type = self.get_round_elem_type_vector().unwrap();
+            let mut all_narrowed_elem_types: Vec<Vec<Type>> = vec![];
+            for et in elem_type.iter() {
+                all_narrowed_elem_types.push(et.narrowings()?);
+            }
+            cartesian_product(
+                &all_narrowed_elem_types,
+            ).iter().map(|narrowed_elem_types| Ok(Type{
+                name: "Tuple".to_owned(),
+                type_args: narrowed_elem_types.into_iter().map(|a|TypeArg::Type(a.clone())).collect(),
+            })).collect()
+        } else {
+            Ok(vec![self.clone()])
+        }
+    }
+}
+
+pub fn cartesian_product(lists: &[Vec<Type>]) -> Vec<Vec<Type>> {
+    let mut results = vec![];
+    cartesian_product_rec(lists, 0, &mut vec![], &mut results);
+    results
+}
+
+fn cartesian_product_rec(
+    lists: &[Vec<Type>],
+    index: usize,
+    current: &mut Vec<Type>,
+    results: &mut Vec<Vec<Type>>,
+) {
+    if index == lists.len() {
+        results.push(current.clone());
+        return;
+    }
+    for item in &lists[index] {
+        current.push(item.clone());
+        cartesian_product_rec(lists, index + 1, current, results);
+        current.pop();
+    }
+}
+
+impl TypeArg {
+    fn skeleton(&self, type_params: &[String]) -> Result<TypeArg, TypeError> {
+        match self {
+            TypeArg::Type(typ) => Ok(TypeArg::Type(typ.skeleton(type_params)?)),
+            TypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
         }
     }
 }

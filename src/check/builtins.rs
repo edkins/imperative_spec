@@ -229,7 +229,7 @@ fn builtins() -> HashMap<String, FuncDef> {
 
     insert_multiple(
         &mut functions,
-        &["&&", "||"],
+        &["&&", "||", "==>"],
         FuncDef::simple("", &[tbool.clone(), tbool.clone()], &tbool),
     );
 

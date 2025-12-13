@@ -343,7 +343,7 @@ impl TypeVars {
         };
 
         if let Some(expected_type) = expected {
-            println!("For expression {}, unifying actual type {} with expected type {}", expr, actual_type, expected_type);
+            // println!("For expression {}, unifying actual type {} with expected type {}", expr, actual_type, expected_type);
             self.unify(&actual_type, expected_type)?;
         }
         Ok(actual_type)
@@ -538,55 +538,6 @@ impl AssignOp {
             AssignOp::AddAssign => "+=",
             AssignOp::SubAssign => "-=",
             AssignOp::MulAssign => "*=",
-        }
-    }
-}
-
-impl Type {
-    /// Strip out type constraints and just return the type that z3/hindley-milner can work with
-    /// u32 -> int
-    /// Vec<u32> -> Vec<int>
-    /// (u32,u64,bool) -> (int,int,bool)
-    /// etc.
-    pub fn skeleton(&self, type_params: &[String]) -> Result<Type, TypeError> {
-        match (self.name.as_str(), self.type_args.len()) {
-            ("u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "nat", 0) => {
-                Ok(Type::basic("int"))
-            }
-            ("bool" | "int" | "str" | "void", 0) => Ok(self.clone()),
-            ("Array", 2) => Ok(Type {
-                name: "Vec".to_owned(),
-                type_args: vec![self.type_args[0].skeleton(type_params)?],
-            }),
-            ("Vec", 1) | ("Tuple", _) | ("Lambda", _) => {
-                let skel_args = self
-                    .type_args
-                    .iter()
-                    .map(|arg| arg.skeleton(type_params))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Type {
-                    name: self.name.clone(),
-                    type_args: skel_args,
-                })
-            }
-            _ => {
-                if type_params.contains(&self.name) {
-                    Ok(Type::basic(&self.name))
-                } else {
-                    Err(TypeError {
-                        message: format!("Unknown type: {}", self.name),
-                    })
-                }
-            }
-        }
-    }
-}
-
-impl TypeArg {
-    fn skeleton(&self, type_params: &[String]) -> Result<TypeArg, TypeError> {
-        match self {
-            TypeArg::Type(typ) => Ok(TypeArg::Type(typ.skeleton(type_params)?)),
-            TypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
         }
     }
 }

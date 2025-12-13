@@ -1,11 +1,42 @@
 use std::collections::HashMap;
 
 use crate::{
-    check::types::TypeError,
+    check::{ops::{Ops, big_and}, types::{TypeError, cartesian_product}},
     syntax::ast::{CallArg, Expr, FuncDef, Stmt, Type},
 };
 
 impl FuncDef {
+    fn type_preconditions(&self, args: &[Expr], type_instantiations: &[Type], outer_type_params: &[String]) -> Result<Vec<Expr>, TypeError> {
+        assert!(self.type_params.len() == type_instantiations.len());
+        if self.args.len() != args.len() {
+            return Err(TypeError {
+                message: format!(
+                    "Wrong number of arguments: expected {}, got {}",
+                    self.args.len(),
+                    args.len()
+                ),
+            });
+        }
+        let mut preconditions = vec![];
+        for (arg, param) in args.iter().zip(&self.args) {
+            let instantiated = param
+                .arg_type
+                .instantiate(&self.type_params, type_instantiations)?;
+            if arg.typ() != instantiated.skeleton(outer_type_params)? {
+                return Err(TypeError {
+                    message: format!(
+                        "Argument type mismatch: expected {}, got {}",
+                        instantiated.skeleton(outer_type_params)?,
+                        arg.typ()
+                    ),
+                });
+            }
+            // println!("Generating preconditions for arg {:?} of type {}", arg, instantiated);
+            preconditions.extend_from_slice(&instantiated.type_assertions(arg.clone(), outer_type_params)?);
+        }
+        Ok(preconditions)
+    }
+
     pub fn lookup_preconditions(
         &self,
         args: &[Expr],
@@ -28,20 +59,20 @@ impl FuncDef {
                 ),
             });
         }
-        let mut compatible = true;
+        // let mut compatible = true;
 
-        let mut preconditions = vec![];
+        let mut preconditions = self.type_preconditions(args, type_instantiations, outer_type_params)?;
 
-        for (arg, param) in args.iter().zip(&self.args) {
-            let instantiated = param
-                .arg_type
-                .instantiate(&self.type_params, type_instantiations)?;
-            if arg.typ() != instantiated.skeleton(outer_type_params)? {
-                compatible = false;
-                break;
-            }
-            preconditions.extend_from_slice(&instantiated.type_assertions(arg.clone(), outer_type_params)?);
-        }
+        // for (arg, param) in args.iter().zip(&self.args) {
+        //     let instantiated = param
+        //         .arg_type
+        //         .instantiate(&self.type_params, type_instantiations)?;
+        //     if arg.typ() != instantiated.skeleton(outer_type_params)? {
+        //         compatible = false;
+        //         break;
+        //     }
+        //     preconditions.extend_from_slice(&instantiated.type_assertions(arg.clone(), outer_type_params)?);
+        // }
 
         if !self.preconditions.is_empty() {
             let arg_mapping = self
@@ -55,19 +86,14 @@ impl FuncDef {
             }
         }
 
-        if compatible {
-            return Ok(preconditions);
-        }
-        Err(TypeError {
-            message: format!(
-                "lookup_preconditions: No matching function overload found for {} given argument types {}",
-                self.name,
-                args.iter()
-                    .map(|t| t.typ().to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
-        })
+        return Ok(preconditions);
+    }
+
+    fn possible_narrowings(&self, type_instantiations: &[Type]) -> Result<Vec<Vec<Type>>, TypeError> {
+        Ok(cartesian_product(&type_instantiations
+            .iter()
+            .map(|t| t.narrowings())
+            .collect::<Result<Vec<_>, TypeError>>()?))
     }
 
     pub fn postconditions_and_type_postconditions(
@@ -89,8 +115,36 @@ impl FuncDef {
             name: self.return_name.clone(),
             typ: Some(ret_inst.skeleton(outer_type_params)?),
         };
-        let type_postconditions = ret_inst.type_assertions(return_var, outer_type_params)?;
-        postconditions.extend(type_postconditions);
+        // let type_postconditions = ret_inst.type_assertions(return_var, outer_type_params)?;
+        // postconditions.extend(type_postconditions);
+
+        // Flowthroughs
+        let mut args = vec![];
+        for arg in &self.args {
+            args.push(Expr::Variable {
+                name: arg.name.clone(),
+                typ: Some(
+                    arg.arg_type
+                        .instantiate(&self.type_params, type_instantiations)?
+                        .skeleton(outer_type_params)?,
+                ),
+            });
+        }
+        for narrowing in self.possible_narrowings(type_instantiations)? {
+            let narrowed_ret_inst = self
+                .return_type
+                .instantiate(&self.type_params, &narrowing)?;
+            let flowthrough_postconditions =
+                narrowed_ret_inst.type_assertions(return_var.clone(), outer_type_params)?;
+            let mut flowthrough_preconditions = Expr::zero();
+            for (i, pc) in flowthrough_postconditions.iter().enumerate() {
+                if i == 0 {
+                    flowthrough_preconditions =
+                        big_and(&self.type_preconditions(&args, &narrowing, outer_type_params)?)?;
+                }
+                postconditions.push(flowthrough_preconditions.implies(&pc)?);
+            }
+        }
 
         Ok(postconditions)
     }

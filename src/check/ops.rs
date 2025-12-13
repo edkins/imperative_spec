@@ -45,6 +45,7 @@ pub trait Ops: Sized {
     #[allow(dead_code)]
     fn ne(&self, other: &Self) -> Result<Self, TypeError>;
     fn and(&self, other: &Self) -> Result<Self, TypeError>;
+    fn implies(&self, other: &Self) -> Result<Self, TypeError>;
     fn seq_len(&self) -> Result<Self, TypeError>;
     fn seq_map(&self, f: &Self) -> Result<Self, TypeError>;
     fn seq_foldl(&self, f: &Self, initial: &Self) -> Result<Self, TypeError>;
@@ -109,6 +110,10 @@ impl Ops for Expr {
     fn and(&self, other: &Expr) -> Result<Expr, TypeError> {
         // TODO: short-circuiting
         known_builtin("&&").make_func_call(&[self.clone(), other.clone()])
+    }
+
+    fn implies(&self, other: &Expr) -> Result<Expr, TypeError> {
+        known_builtin("==>").make_func_call(&[self.clone(), other.clone()])
     }
 
     fn seq_len(&self) -> Result<Expr, TypeError> {

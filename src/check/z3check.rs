@@ -660,6 +660,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env, type_instantiat
         ("/", 2) => Ok((int(&args[0])? / int(&args[1])?).into()),
         ("&&", 2) => Ok((boolean(&args[0])? & boolean(&args[1])?).into()),
         ("||", 2) => Ok((boolean(&args[0])? | boolean(&args[1])?).into()),
+        ("==>", 2) => Ok((boolean(&args[0])?.implies(&boolean(&args[1])?)).into()),
         ("=", 3) => {
             env.assume(args[1].safe_eq(&args[2])?);
             Ok(void_value())
@@ -903,10 +904,10 @@ impl Expr {
                     func.postconditions_and_type_postconditions(type_instantiations, &env.type_param_list)?;
                 if !postconditions.is_empty() {
                     if env.verbosity >= 2 {
-                        println!(
-                            "Assuming postconditions for function call {}: {:?}",
-                            name, postconditions
-                        );
+                        println!("Assuming postconditions for function call {}", name);
+                        for pc in &postconditions {
+                            println!("  {}", pc);
+                        }
                     }
                     let mut new_env = env.enter_call_scope(&func, type_instantiations, &z3args)?;
                     new_env.insert_var_with_value(&func.return_name, &func.return_type, &ast)?;
