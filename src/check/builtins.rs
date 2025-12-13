@@ -304,7 +304,7 @@ fn builtins() -> HashMap<String, FuncDef> {
                                 name: "arg0".to_owned(),
                                 typ: Some(vect.clone()),
                             }),
-                            &[vect.clone()],
+                            &[tparam.clone()],
                         )
                         .unwrap(),
                 ])

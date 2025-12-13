@@ -320,6 +320,10 @@ impl TypeVars {
                 if seq_type.is_square_seq() {
                     let elem_type = seq_type.get_uniform_square_elem_type().unwrap().clone();
                     self.infer_expr(index, env, Some(&Type::basic("int")))?;
+                    *expr = Expr::FunctionCall { name: "seq_at".to_owned(), args: vec![
+                        CallArg::Expr((**seq).clone()),
+                        CallArg::Expr((**index).clone()),
+                    ], type_instantiations: vec![elem_type.clone()], return_type: Some(elem_type.clone()) };
                     elem_type
                 } else if seq_type.is_round_seq() {
                     let index = index.as_literal_u64()?;

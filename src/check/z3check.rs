@@ -897,7 +897,7 @@ impl Expr {
                 }
                 for cond in preconditions {
                     let cond_z3_value = cond.z3_check(env)?;
-                    env.assert(&boolean(&cond_z3_value)?, "Type precondition failed")?;
+                    env.assert(&boolean(&cond_z3_value)?, "Precondition failed")?;
                 }
                 if env.verbosity >= 2 && !func.preconditions.is_empty() {
                     println!("End precondition check for function call {}", name);
