@@ -20,11 +20,12 @@ pub fn big_and(exprs: &[Expr]) -> Result<Expr, TypeError> {
 
 impl FuncDef {
     pub fn pmake_func_call(&self, args: &[Expr], type_instantiations: &[Type]) -> Result<Expr, TypeError> {
+        assert!(self.type_params.len() == type_instantiations.len());
         Ok(Expr::FunctionCall {
             name: self.name.to_owned(),
             args: args.to_owned(),
             type_instantiations: type_instantiations.to_owned(),
-            return_type: Some(self.return_type.clone()),
+            return_type: Some(self.return_type.instantiate(&self.type_params, type_instantiations)?),
         })
     }
 
@@ -90,11 +91,11 @@ impl Expr {
 
 impl Ops for Expr {
     fn eq(&self, other: &Expr) -> Result<Expr, TypeError> {
-        known_builtin("==").make_func_call(&[self.clone(), other.clone()])
+        known_builtin("==").pmake_func_call(&[self.clone(), other.clone()], &[self.typ()])
     }
 
     fn ne(&self, other: &Expr) -> Result<Expr, TypeError> {
-        known_builtin("!=").make_func_call(&[self.clone(), other.clone()])
+        known_builtin("!=").pmake_func_call(&[self.clone(), other.clone()], &[self.typ()])
     }
 
     fn and(&self, other: &Expr) -> Result<Expr, TypeError> {
@@ -103,20 +104,38 @@ impl Ops for Expr {
     }
 
     fn seq_len(&self) -> Result<Expr, TypeError> {
-        known_builtin("seq_len").make_func_call(from_ref(self))
+        known_builtin("seq_len").pmake_func_call(from_ref(self), &[self.typ().uniform_square_elem_type()?])
     }
 
     fn seq_map(&self, f: &Expr) -> Result<Expr, TypeError> {
-        known_builtin("seq_map").make_func_call(&[self.clone(), f.clone()])
+        let ftype = f.typ();
+        assert!(ftype.name == "Lambda");
+        assert!(ftype.type_args.len() == 2);
+        assert!(ftype.type_args[0].as_type()? == self.typ().uniform_square_elem_type()?);
+        known_builtin("seq_map").pmake_func_call(&[self.clone(), f.clone()], &[
+            ftype.type_args[0].as_type()?,
+            ftype.type_args[1].as_type()?,
+        ])
     }
 
     fn seq_foldl(&self, f: &Expr, initial: &Expr) -> Result<Expr, TypeError> {
-        known_builtin("seq_foldl").make_func_call(&[self.clone(), f.clone(), initial.clone()])
+        let ftype = f.typ();
+        assert!(ftype.name == "Lambda");
+        assert!(ftype.type_args.len() == 3);
+        assert!(ftype.type_args[0].as_type()? == initial.typ());
+        assert!(ftype.type_args[1].as_type()? == self.typ().uniform_square_elem_type()?);
+        assert!(ftype.type_args[2].as_type()? == ftype.type_args[0].as_type()?);
+        known_builtin("seq_foldl").pmake_func_call(&[self.clone(), f.clone(), initial.clone()], &[
+            ftype.type_args[0].as_type()?,
+            ftype.type_args[1].as_type()?,
+        ])
     }
 
     fn seq_all(&self, predicate: &Expr) -> Result<Expr, TypeError> {
-        self.seq_map(predicate)?
-            .seq_foldl(&and_lambda(), &Expr::Literal(Literal::Bool(true)))
+        let result = self.seq_map(predicate)?
+            .seq_foldl(&and_lambda(), &Expr::Literal(Literal::Bool(true)));
+        println!("seq_all: {:?}", result);
+        result
     }
 
     // fn seq_at(&self, index: &Expr) -> Result<Expr, TypeError> {

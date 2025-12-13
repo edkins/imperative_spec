@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use crate::{check::types::TypeError, syntax::ast::{Expr, FuncDef, Stmt}};
+use crate::{check::types::TypeError, syntax::ast::{Expr, FuncDef, Stmt, Type}};
 
 
 impl FuncDef {
-    pub fn lookup_preconditions(&self, args: &[Expr]) -> Result<Vec<Expr>, TypeError> {
+    pub fn lookup_preconditions(&self, args: &[Expr], type_instantiations: &[Type]) -> Result<Vec<Expr>, TypeError> {
+        assert!(self.type_params.len() == type_instantiations.len(), "Function {} called with wrong number of type instantiations: expected {:?}, got {:?}", self.name, self.type_params, type_instantiations);
         if self.args.len() != args.len() {
             return Err(TypeError {
                 message: format!(
@@ -19,14 +20,13 @@ impl FuncDef {
         let mut preconditions = vec![];
 
         for (arg, param) in args.iter().zip(&self.args) {
-            if arg.typ() != param.arg_type.skeleton(&self.type_params)? {
+            let instantiated = param.arg_type.instantiate(&self.type_params, type_instantiations)?;
+            if arg.typ() != instantiated.skeleton(&[])? {
                 compatible = false;
                 break;
             }
             preconditions.extend_from_slice(
-                &param
-                    .arg_type
-                    .type_assertions(arg.clone(), &self.type_params)?,
+                &instantiated.type_assertions(arg.clone(), &[])?,
             );
         }
 
@@ -55,6 +55,18 @@ impl FuncDef {
                     .join(", ")
             ),
         })
+    }
+
+    pub fn postconditions_and_type_postconditions(&self, type_instantiations: &[Type]) -> Result<Vec<Expr>, TypeError> {
+        let mut postconditions = self.postconditions.clone();
+        let ret_inst = self.return_type.instantiate(&self.type_params, type_instantiations)?;
+        let return_var = Expr::Variable {
+            name: self.return_name.clone(),
+            typ: Some(ret_inst.skeleton(&[])?),
+        };
+        let type_postconditions = ret_inst.type_assertions(return_var, &[])?;
+        postconditions.extend(type_postconditions);
+        Ok(postconditions)
     }
 }
 

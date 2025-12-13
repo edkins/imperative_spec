@@ -291,18 +291,18 @@ fn identifier(input: &str) -> IResult<&str, String> {
     }
 }
 
-// fn specific_identifier(expected: &str) -> impl Fn(&str) -> IResult<&str, String> {
-//     move |input: &str| {
-//         let (input, word) = word(input)?;
-//         match word {
-//             Word::Identifier(name) if name == expected => Ok((input, name)),
-//             _ => Err(nom::Err::Error(nom::error::Error::new(
-//                 input,
-//                 nom::error::ErrorKind::Tag,
-//             ))),
-//         }
-//     }
-// }
+fn specific_identifier(expected: &str) -> impl Fn(&str) -> IResult<&str, String> {
+    move |input: &str| {
+        let (input, word) = word(input)?;
+        match word {
+            Word::Identifier(name) if name == expected => Ok((input, name)),
+            _ => Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            ))),
+        }
+    }
+}
 
 fn variable_or_call(input: &str) -> IResult<&str, Expr> {
     let (input, name) = identifier(input)?;
@@ -834,10 +834,12 @@ fn expr_or_empty(input: &str) -> IResult<&str, Expr> {
 }
 
 fn attribute_check_decisions(input: &str) -> IResult<&str, FuncAttribute> {
-    let (input, decisions) = separated_list1(
+    let (input, _) = specific_identifier("check_decisions")(input)?;
+    let (input, decisions) = delimited(
+        symbol(Symbol::OpenParen), separated_list1(
         symbol(Symbol::Comma),
         identifier,
-    ).parse(input)?;
+    ), symbol(Symbol::CloseParen)).parse(input)?;
     Ok((
         input,
         FuncAttribute::CheckDecisions(decisions)

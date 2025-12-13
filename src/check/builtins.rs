@@ -223,7 +223,7 @@ fn builtins() -> HashMap<String, FuncDef> {
                 //     },
                 // ],
                 preconditions: vec![
-                    ne.make_func_call(&[tint.var("arg1"), Expr::zero()])
+                    ne.pmake_func_call(&[tint.var("arg1"), Expr::zero()], &[tint.clone()])
                         .unwrap(),
                 ],
                 attributes: vec![],
@@ -297,10 +297,10 @@ fn builtins() -> HashMap<String, FuncDef> {
                         name: "arg1".to_owned(),
                         typ: Some(tint.clone()),
                     },
-                    seq_len.make_func_call(from_ref(&Expr::Variable {
+                    seq_len.pmake_func_call(from_ref(&Expr::Variable {
                         name: "arg0".to_owned(),
                         typ: Some(vect.clone()),
-                    })).unwrap(),
+                    }), &[vect.clone()]).unwrap(),
                 ]).unwrap(),
             ],
             attributes: vec![],

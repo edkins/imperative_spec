@@ -107,12 +107,19 @@ impl TypeArg {
     //     }
     // }
 
-    fn as_type(&self) -> Result<Type, TypeError> {
+    pub fn as_type(&self) -> Result<Type, TypeError> {
         match self {
             TypeArg::Type(t) => Ok(t.clone()),
             TypeArg::Bound(_) => Err(TypeError {
                 message: "Expected Type, found Bound".to_owned(),
             }),
+        }
+    }
+
+    pub fn instantiate(&self, type_params: &[String], instantiations: &[Type]) -> Result<TypeArg, TypeError> {
+        match self {
+            TypeArg::Type(t) => Ok(TypeArg::Type(t.instantiate(type_params, instantiations)?)),
+            TypeArg::Bound(b) => Ok(TypeArg::Bound(b.clone())),
         }
     }
 }
@@ -143,6 +150,34 @@ impl Type {
                 .map(TypeArg::Type)
                 .chain(std::iter::once(TypeArg::Type(ret_type.clone())))
                 .collect(),
+        }
+    }
+
+    pub fn instantiate(&self, type_params: &[String], instantiations: &[Type]) -> Result<Type, TypeError> {
+        assert!(type_params.len() == instantiations.len());
+        if type_params.contains(&self.name) {
+            if !self.type_args.is_empty() {
+                return Err(TypeError {
+                    message: format!(
+                        "Cannot instantiate parameterized type {} with parameters",
+                        self
+                    ),
+                });
+            }
+            let index = type_params
+                .iter()
+                .position(|p| p == &self.name)
+                .expect("Type parameter must be in type_params");
+            Ok(instantiations[index].clone())
+        } else {
+            Ok(Type {
+                name: self.name.clone(),
+                type_args: self
+                    .type_args
+                    .iter()
+                    .map(|ta| ta.instantiate(type_params, instantiations))
+                    .collect::<Result<Vec<TypeArg>, TypeError>>()?,
+            })
         }
     }
 
@@ -245,6 +280,7 @@ impl Type {
         param_list: &[String],
     ) -> Result<Vec<Expr>, TypeError> {
         assert!(expr.typ() == self.skeleton(param_list)?, "Type assertion expression type {} does not match expected type {}", expr.typ(), self.skeleton(param_list)?);
+        assert!(param_list.is_empty());
         match self.name.as_str() {
             "int" | "nat" | "z8" | "z16" | "z32" | "z64" | "i8" | "i16" | "i32" | "i64" | "u8"
             | "u16" | "u32" | "u64" => {
@@ -252,13 +288,7 @@ impl Type {
                 Ok(bounds_to_expr(lower, upper, expr))
             }
             "Vec" | "Array" => {
-                // TODO: check array lens also
-                let elem_type = self.get_uniform_square_elem_type().ok_or_else(|| TypeError{
-                    message: format!(
-                        "Type {} should have exactly one type argument",
-                        self.name
-                    ),
-                })?;
+                let elem_type = self.uniform_square_elem_type()?;
                 let mut conds = vec![];
                 if let Some(len) = self.get_square_seq_length() {
                     conds.push(expr.seq_len()?.eq(&Expr::Literal(Literal::U64(len)))?);
@@ -355,6 +385,19 @@ impl Type {
     pub fn is_round_seq(&self) -> bool {
         // don't include void here
         self.name == "Tuple"
+    }
+
+    pub fn uniform_square_elem_type(&self) -> Result<Type, TypeError> {
+        if let Some(t) = self.get_uniform_square_elem_type() {
+            Ok(t.clone())
+        } else {
+            Err(TypeError {
+                message: format!(
+                    "Type {} is not a uniform square sequence",
+                    self
+                ),
+            })
+        }
     }
 
     pub fn get_uniform_square_elem_type(&self) -> Option<&Type> {

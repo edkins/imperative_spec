@@ -191,6 +191,11 @@ impl TypeVars {
                         self.infer_expr(arg, env, Some(expected_type))?;
                     }
                     return_type.replace(gen_result.ret_type.clone());
+                    *type_instantiations = func_type
+                        .type_params
+                        .iter()
+                        .map(|param| gen_result.type_param_lookup.0.get(param).unwrap().clone())
+                        .collect();
                     gen_result.ret_type
                 } else {
                     return Err(TypeError{message: format!("Unknown function: {}", name)});
@@ -289,6 +294,110 @@ impl TypeVars {
                 self.infer_stmt(stmt, env)
             }
         }
+    }
+
+    fn expand_type(&self, typ: &Type) -> Result<Type, TypeError> {
+        if typ.is_type_var() {
+            if let Some(expanded) = self.expansions.get(&typ.name) {
+                self.expand_type(expanded)
+            } else {
+                Ok(typ.clone())
+            }
+        } else {
+            let expanded_args = typ
+                .type_args
+                .iter()
+                .map(|arg| match arg {
+                    TypeArg::Type(t) => Ok(TypeArg::Type(self.expand_type(t)?)),
+                    TypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Type {
+                name: typ.name.clone(),
+                type_args: expanded_args,
+            })
+        }
+    }
+
+    fn expand_stmt(&self, stmt: &mut Stmt) -> Result<(), TypeError> {
+        match stmt {
+            Stmt::Expr(expr) => self.expand_expr(expr),
+            Stmt::Let { typ, value, .. } => {
+                if let Some(t) = typ {
+                    *t = self.expand_type(t)?;
+                }
+                self.expand_expr(value)
+            }
+            Stmt::Assign { value, .. } => self.expand_expr(value),
+        }
+    }
+
+    fn expand_expr(&self, expr: &mut Expr) -> Result<(), TypeError> {
+        match expr {
+            Expr::Literal(_) => Ok(()),
+            Expr::Variable { typ, .. } => {
+                if let Some(t) = typ {
+                    *t = self.expand_type(t)?;
+                }
+                Ok(())
+            }
+            Expr::Semicolon(stmt, expr) => {
+                self.expand_stmt(stmt)?;
+                self.expand_expr(expr)
+            }
+            Expr::FunctionCall { args, return_type, type_instantiations, .. } => {
+                for arg in args.iter_mut() {
+                    self.expand_expr(arg)?;
+                }
+                if let Some(t) = return_type {
+                    *t = self.expand_type(t)?;
+                }
+                for t in type_instantiations.iter_mut() {
+                    *t = self.expand_type(t)?;
+                }
+                Ok(())
+            }
+            Expr::RoundSequence { elems } => {
+                for elem in elems.iter_mut() {
+                    self.expand_expr(elem)?;
+                }
+                Ok(())
+            }
+            Expr::SquareSequence { elems, elem_type } => {
+                for elem in elems.iter_mut() {
+                    self.expand_expr(elem)?;
+                }
+                if let Some(t) = elem_type {
+                    *t = self.expand_type(t)?;
+                }
+                Ok(())
+            }
+            Expr::Lambda { args, body } => {
+                for arg in args.iter_mut() {
+                    arg.arg_type = self.expand_type(&arg.arg_type)?;
+                }
+                self.expand_expr(body)
+            }
+            Expr::SeqAt { seq, index } => {
+                self.expand_expr(seq)?;
+                self.expand_expr(index)
+            }
+        }
+    }
+
+    fn expand_funcdef(&self, func: &mut FuncDef) -> Result<(), TypeError> {
+        for arg in func.args.iter_mut() {
+            arg.arg_type = self.expand_type(&arg.arg_type)?;
+        }
+        func.return_type = self.expand_type(&func.return_type)?;
+        self.expand_expr(&mut func.body)?;
+        for pre in func.preconditions.iter_mut() {
+            self.expand_expr(pre)?;
+        }
+        for post in func.postconditions.iter_mut() {
+            self.expand_expr(post)?;
+        }
+        Ok(())
     }
 }
 
@@ -402,11 +511,17 @@ pub fn hindley_milner_infer(source_file: &mut SourceFile, verbosity: u8) -> Resu
             local_type_vars.infer_expr(post, &env, Some(&Type::basic("bool")))?;
         }
 
+        local_type_vars.expand_funcdef(func)?;
+
         if verbosity >= 2 {
             println!("Inferred types for function {}:", func.name);
             for (var, typ) in &env.vars {
                 println!("  {} : {}", var, typ);
             }
+            // println!("Expansions:");
+            // for (var, typ) in &local_type_vars.expansions {
+            //     println!("  {} => {}", var, typ);
+            // }
             println!("{}", func);
         }
     }

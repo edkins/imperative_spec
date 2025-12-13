@@ -79,17 +79,6 @@ impl FuncDef {
         let ret_sort = self.return_type.to_z3_sort()?;
         Ok(z3::FuncDecl::new(self.name.clone(), &arg_refs, &ret_sort))
     }
-
-    fn postconditions_and_type_postconditions(&self) -> Result<Vec<Expr>, CheckError> {
-        let mut postconditions = self.postconditions.clone();
-        let return_var = Expr::Variable {
-            name: self.return_name.clone(),
-            typ: Some(self.return_type.skeleton(&self.type_params)?),
-        };
-        let type_postconditions = self.return_type.type_assertions(return_var, &self.type_params)?;
-        postconditions.extend(type_postconditions);
-        Ok(postconditions)
-    }
 }
 
 impl From<NulError> for CheckError {
@@ -782,7 +771,7 @@ impl Expr {
         match self {
             Expr::Literal(literal) => literal.z3_check(),
             Expr::Variable { name, .. } => env.get_var(name),
-            Expr::FunctionCall { name, args, .. } => {
+            Expr::FunctionCall { name, args, type_instantiations, .. } => {
                 let z3args = args
                     .iter()
                     .map(|arg| arg.z3_check(env))
@@ -790,7 +779,7 @@ impl Expr {
                 let func = env.get_overloaded_func(name)?;
                 // let func = env.keep_optimizations(&func, args)?;
                 // println!("{}, {:?}", name, args);
-                let preconditions = func.lookup_preconditions(args)?;
+                let preconditions = func.lookup_preconditions(args, type_instantiations)?;
                 if env.verbosity >= 2 && !func.preconditions.is_empty() {
                     println!(
                         "Begin precondition check for function call {}, preconditions {:?}",
@@ -806,7 +795,7 @@ impl Expr {
                 }
                 let ast = z3_function_call(name, &z3args, env)?;
 
-                let postconditions = func.postconditions_and_type_postconditions()?;
+                let postconditions = func.postconditions_and_type_postconditions(type_instantiations)?;
                 if !postconditions.is_empty() {
                     if env.verbosity >= 2 {
                         println!(

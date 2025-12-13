@@ -134,41 +134,49 @@ impl Expr {
                     Ok(())
                 }
             }
-            Expr::FunctionCall { name, args, type_instantiations, .. } => match name as &str {
-                "==" | "!=" | "<" | "<=" | ">" | ">=" => {
-                    strength.open_brace(f, BindingStrength::Comparison)?;
-                    args[0].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
-                    write!(f, " {} ", name)?;
-                    args[1].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
-                    strength.close_brace(f, BindingStrength::Comparison)
-                }
-                "+" | "-" => {
-                    strength.open_brace(f, BindingStrength::PlusMinus)?;
-                    args[0].fmt_with_binding_strength(f, BindingStrength::PlusMinus)?;
-                    write!(f, " {} ", name)?;
-                    args[1].fmt_with_binding_strength(f, BindingStrength::PlusMinus)?;
-                    strength.close_brace(f, BindingStrength::PlusMinus)
-                }
-                _ => {
-                    write!(f, "{}", name)?;
-                    if !type_instantiations.is_empty() {
-                        write!(f, "<")?;
-                        for (i, typ) in type_instantiations.iter().enumerate() {
-                            write!(f, "{}", typ)?;
-                            if i != type_instantiations.len() - 1 {
-                                write!(f, ",")?;
+            Expr::FunctionCall { name, args, type_instantiations, return_type } => {
+                match name as &str {
+                    "==" | "!=" | "<" | "<=" | ">" | ">=" => {
+                        strength.open_brace(f, BindingStrength::Comparison)?;
+                        args[0].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
+                        write!(f, " {} ", name)?;
+                        args[1].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
+                        strength.close_brace(f, BindingStrength::Comparison)?;
+                    }
+                    "+" | "-" => {
+                        strength.open_brace(f, BindingStrength::PlusMinus)?;
+                        args[0].fmt_with_binding_strength(f, BindingStrength::PlusMinus)?;
+                        write!(f, " {} ", name)?;
+                        args[1].fmt_with_binding_strength(f, BindingStrength::PlusMinus)?;
+                        strength.close_brace(f, BindingStrength::PlusMinus)?;
+                    }
+                    _ => {
+                        write!(f, "{}", name)?;
+                        if !type_instantiations.is_empty() {
+                            write!(f, "<")?;
+                            for (i, typ) in type_instantiations.iter().enumerate() {
+                                write!(f, "{}", typ)?;
+                                if i != type_instantiations.len() - 1 {
+                                    write!(f, ",")?;
+                                }
+                            }
+                            write!(f, ">")?;
+                        }
+                        write!(f, "(")?;
+                        for (i, arg) in args.iter().enumerate() {
+                            arg.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                            if i != args.len() - 1 {
+                                write!(f, ", ")?;
                             }
                         }
-                        write!(f, ">")?;
+                        write!(f, ")")?;
                     }
-                    write!(f, "(")?;
-                    for (i, arg) in args.iter().enumerate() {
-                        arg.fmt_with_binding_strength(f, BindingStrength::Comma)?;
-                        if i != args.len() - 1 {
-                            write!(f, ", ")?;
-                        }
-                    }
-                    write!(f, ")")
+                }
+                if let Some(return_type) = return_type {
+                    // write!(f, ":{}", return_type)?;
+                    Ok(())
+                } else {
+                    Ok(())
                 }
             },
             Expr::Semicolon(stmt, expr) => {
