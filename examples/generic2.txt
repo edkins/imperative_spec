@@ -1,0 +1,11 @@
+fn generic_fn<T>(xs: [T]) -> (res:[T])
+    requires len(xs) > 0
+    ensures len(xs) > 0
+{
+    append(xs, xs)
+}
+
+fn main() {
+    let ys = generic_fn([1,2,3]);
+    ()
+}

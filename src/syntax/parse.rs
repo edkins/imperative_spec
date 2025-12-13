@@ -516,7 +516,7 @@ fn expr_prefixed(input: &str) -> IResult<&str, Expr> {
                 return_type: None,
             }),
         ),
-        expr_tight,
+        expr_suffixed,
     ))
     .parse(input)
 }
@@ -858,6 +858,12 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
     let (input, mut attributes) = many0(attribute).parse(input)?;
     let (input, _) = keyword(Word::Fn)(input)?;
     let (input, name) = identifier(input)?;
+    let (input, type_params) = opt(delimited(
+        symbol(Symbol::Lt),
+        separated_list1(symbol(Symbol::Comma), identifier),
+        symbol(Symbol::Gt),
+    ))
+    .parse(input)?;
     let (input, args) = delimited(
         symbol(Symbol::OpenParen),
         separated_list0(symbol(Symbol::Comma), arg),
@@ -910,7 +916,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         FuncDef {
             attributes,
             name,
-            type_params: vec![],
+            type_params: type_params.unwrap_or_else(Vec::new),
             args,
             return_name: return_name.unwrap_or_else(|| "__ret__".to_owned()),
             return_type,

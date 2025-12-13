@@ -269,9 +269,9 @@ impl std::fmt::Debug for Expr {
 impl Display for Arg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.mutable {
-            write!(f, "mut {}: {}", self.name, self.arg_type)
+            write!(f, "mut {}:{}", self.name, self.arg_type)
         } else {
-            write!(f, "{}: {}", self.name, self.arg_type)
+            write!(f, "{}:{}", self.name, self.arg_type)
         }
     }
 }
@@ -297,7 +297,18 @@ impl Display for FuncDef {
         for attrib in &self.attributes {
             writeln!(f, "{}", attrib)?;
         }
-        write!(f, "fn {}(", self.name)?;
+        write!(f, "fn {}", self.name)?;
+        if !self.type_params.is_empty() {
+            write!(f, "<")?;
+            for (i, tp) in self.type_params.iter().enumerate() {
+                write!(f, "{}", tp)?;
+                if i != self.type_params.len() - 1 {
+                    write!(f, ", ")?;
+                }
+            }
+            write!(f, ">")?;
+        }
+        write!(f, "(")?;
         for (i, arg) in self.args.iter().enumerate() {
             write!(f, "{}", arg)?;
             if i != self.args.len() - 1 {

@@ -114,6 +114,8 @@ impl TypeVars {
     }
 
     fn unify(&mut self, t0: &Type, t1: &Type) -> Result<(), TypeError> {
+        let t0 = self.expand_type(t0, true)?;
+        let t1 = self.expand_type(t1, true)?;
         if t0 == t1 {
             return Ok(());
         }
@@ -317,7 +319,7 @@ impl TypeVars {
                 let seq_type = self.infer_expr(seq, env, None)?;
                 if seq_type.is_square_seq() {
                     let elem_type = seq_type.get_uniform_square_elem_type().unwrap().clone();
-                    self.infer_expr(index, env, Some(&Type::basic("u64")))?;
+                    self.infer_expr(index, env, Some(&Type::basic("int")))?;
                     elem_type
                 } else if seq_type.is_round_seq() {
                     let index = index.as_literal_u64()?;
@@ -341,6 +343,7 @@ impl TypeVars {
         };
 
         if let Some(expected_type) = expected {
+            println!("For expression {}, unifying actual type {} with expected type {}", expr, actual_type, expected_type);
             self.unify(&actual_type, expected_type)?;
         }
         Ok(actual_type)
@@ -388,19 +391,25 @@ impl TypeVars {
         }
     }
 
-    fn expand_type(&self, typ: &Type) -> Result<Type, TypeError> {
+    fn expand_type(&self, typ: &Type, allow_unbound: bool) -> Result<Type, TypeError> {
         if typ.is_type_var() {
             if let Some(expanded) = self.expansions.get(&typ.name) {
-                self.expand_type(expanded)
+                self.expand_type(expanded, allow_unbound)
             } else {
-                Ok(typ.clone())
+                if allow_unbound {
+                    Ok(typ.clone())
+                } else {
+                    Err(TypeError {
+                        message: format!("Unbound type variable: {} in function {}", typ.name, self.debug_func_name),
+                    })
+                }
             }
         } else {
             let expanded_args = typ
                 .type_args
                 .iter()
                 .map(|arg| match arg {
-                    TypeArg::Type(t) => Ok(TypeArg::Type(self.expand_type(t)?)),
+                    TypeArg::Type(t) => Ok(TypeArg::Type(self.expand_type(t, allow_unbound)?)),
                     TypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -411,43 +420,43 @@ impl TypeVars {
         }
     }
 
-    fn expand_stmt(&self, stmt: &mut Stmt) -> Result<(), TypeError> {
+    fn expand_stmt(&self, stmt: &mut Stmt, allow_unbound: bool) -> Result<(), TypeError> {
         match stmt {
-            Stmt::Expr(expr) => self.expand_expr(expr),
+            Stmt::Expr(expr) => self.expand_expr(expr, allow_unbound),
             Stmt::Let { typ, value, .. } => {
                 if let Some(t) = typ {
-                    *t = self.expand_type(t)?;
+                    *t = self.expand_type(t, allow_unbound)?;
                 }
-                self.expand_expr(value)
+                self.expand_expr(value, allow_unbound)
             }
-            Stmt::Assign { value, .. } => self.expand_expr(value),
+            Stmt::Assign { value, .. } => self.expand_expr(value, allow_unbound),
         }
     }
 
-    fn expand_call_arg(&self, arg: &mut CallArg) -> Result<(), TypeError> {
+    fn expand_call_arg(&self, arg: &mut CallArg, allow_unbound: bool) -> Result<(), TypeError> {
         match arg {
-            CallArg::Expr(e) => self.expand_expr(e),
+            CallArg::Expr(e) => self.expand_expr(e, allow_unbound),
             CallArg::MutVar { typ, .. } => {
                 if let Some(t) = typ {
-                    *t = self.expand_type(t)?;
+                    *t = self.expand_type(t, allow_unbound)?;
                 }
                 Ok(())
             }
         }
     }
 
-    fn expand_expr(&self, expr: &mut Expr) -> Result<(), TypeError> {
+    fn expand_expr(&self, expr: &mut Expr, allow_unbound: bool) -> Result<(), TypeError> {
         match expr {
             Expr::Literal(_) => Ok(()),
             Expr::Variable { typ, .. } => {
                 if let Some(t) = typ {
-                    *t = self.expand_type(t)?;
+                    *t = self.expand_type(t, allow_unbound)?;
                 }
                 Ok(())
             }
             Expr::Semicolon(stmt, expr) => {
-                self.expand_stmt(stmt)?;
-                self.expand_expr(expr)
+                self.expand_stmt(stmt, allow_unbound)?;
+                self.expand_expr(expr, allow_unbound)
             }
             Expr::FunctionCall {
                 args,
@@ -456,55 +465,55 @@ impl TypeVars {
                 ..
             } => {
                 for arg in args.iter_mut() {
-                    self.expand_call_arg(arg)?;
+                    self.expand_call_arg(arg, allow_unbound)?;
                 }
                 if let Some(t) = return_type {
-                    *t = self.expand_type(t)?;
+                    *t = self.expand_type(t, allow_unbound)?;
                 }
                 for t in type_instantiations.iter_mut() {
-                    *t = self.expand_type(t)?;
+                    *t = self.expand_type(t, allow_unbound)?;
                 }
                 Ok(())
             }
             Expr::RoundSequence { elems } => {
                 for elem in elems.iter_mut() {
-                    self.expand_expr(elem)?;
+                    self.expand_expr(elem, allow_unbound)?;
                 }
                 Ok(())
             }
             Expr::SquareSequence { elems, elem_type } => {
                 for elem in elems.iter_mut() {
-                    self.expand_expr(elem)?;
+                    self.expand_expr(elem, allow_unbound)?;
                 }
                 if let Some(t) = elem_type {
-                    *t = self.expand_type(t)?;
+                    *t = self.expand_type(t, allow_unbound)?;
                 }
                 Ok(())
             }
             Expr::Lambda { args, body } => {
                 for arg in args.iter_mut() {
-                    arg.arg_type = self.expand_type(&arg.arg_type)?;
+                    arg.arg_type = self.expand_type(&arg.arg_type, allow_unbound)?;
                 }
-                self.expand_expr(body)
+                self.expand_expr(body, allow_unbound)
             }
             Expr::SeqAt { seq, index } => {
-                self.expand_expr(seq)?;
-                self.expand_expr(index)
+                self.expand_expr(seq, allow_unbound)?;
+                self.expand_expr(index, allow_unbound)
             }
         }
     }
 
     fn expand_funcdef(&self, func: &mut FuncDef) -> Result<(), TypeError> {
         for arg in func.args.iter_mut() {
-            arg.arg_type = self.expand_type(&arg.arg_type)?;
+            arg.arg_type = self.expand_type(&arg.arg_type, false)?;
         }
-        func.return_type = self.expand_type(&func.return_type)?;
-        self.expand_expr(&mut func.body)?;
+        func.return_type = self.expand_type(&func.return_type, false)?;
+        self.expand_expr(&mut func.body, false)?;
         for pre in func.preconditions.iter_mut() {
-            self.expand_expr(pre)?;
+            self.expand_expr(pre, false)?;
         }
         for post in func.postconditions.iter_mut() {
-            self.expand_expr(post)?;
+            self.expand_expr(post, false)?;
         }
         Ok(())
     }
@@ -617,6 +626,9 @@ pub fn hindley_milner_infer(source_file: &mut SourceFile, verbosity: u8) -> Resu
 
     // Now infer types for each function body
     for func in &mut source_file.functions {
+        if verbosity >= 1 {
+            println!("HM inferring types for function {}", func.name);
+        }
         let mut local_type_vars = type_vars.clone();
         local_type_vars.debug_func_name = func.name.clone();
         let funcdef = type_vars.functions.get(&func.name).unwrap().clone();

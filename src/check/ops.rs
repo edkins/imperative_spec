@@ -112,7 +112,7 @@ impl Ops for Expr {
     }
 
     fn seq_len(&self) -> Result<Expr, TypeError> {
-        known_builtin("seq_len")
+        known_builtin("len")
             .pmake_func_call(from_ref(self), &[self.typ().uniform_square_elem_type()?])
     }
 

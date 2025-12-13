@@ -10,6 +10,7 @@ impl FuncDef {
         &self,
         args: &[Expr],
         type_instantiations: &[Type],
+        outer_type_params: &[String],
     ) -> Result<Vec<Expr>, TypeError> {
         assert!(
             self.type_params.len() == type_instantiations.len(),
@@ -35,11 +36,11 @@ impl FuncDef {
             let instantiated = param
                 .arg_type
                 .instantiate(&self.type_params, type_instantiations)?;
-            if arg.typ() != instantiated.skeleton(&[])? {
+            if arg.typ() != instantiated.skeleton(outer_type_params)? {
                 compatible = false;
                 break;
             }
-            preconditions.extend_from_slice(&instantiated.type_assertions(arg.clone(), &[])?);
+            preconditions.extend_from_slice(&instantiated.type_assertions(arg.clone(), outer_type_params)?);
         }
 
         if !self.preconditions.is_empty() {
@@ -50,7 +51,7 @@ impl FuncDef {
                 .zip(args.iter().cloned())
                 .collect::<HashMap<_, _>>();
             for cond in &self.preconditions {
-                preconditions.push(cond.subst(&arg_mapping)?);
+                preconditions.push(cond.type_subst(&self.type_params, type_instantiations)?.subst(&arg_mapping)?);
             }
         }
 
@@ -72,9 +73,13 @@ impl FuncDef {
     pub fn postconditions_and_type_postconditions(
         &self,
         type_instantiations: &[Type],
+        outer_type_params: &[String],
     ) -> Result<Vec<Expr>, TypeError> {
         // Regular postconditions
-        let mut postconditions = self.postconditions.clone();
+        let mut postconditions = self.postconditions
+            .iter()
+            .map(|t| t.type_subst(&self.type_params, type_instantiations))
+            .collect::<Result<Vec<_>, TypeError>>()?;
 
         // Return type postcondition
         let ret_inst = self
@@ -82,9 +87,9 @@ impl FuncDef {
             .instantiate(&self.type_params, type_instantiations)?;
         let return_var = Expr::Variable {
             name: self.return_name.clone(),
-            typ: Some(ret_inst.skeleton(&[])?),
+            typ: Some(ret_inst.skeleton(outer_type_params)?),
         };
-        let type_postconditions = ret_inst.type_assertions(return_var, &[])?;
+        let type_postconditions = ret_inst.type_assertions(return_var, outer_type_params)?;
         postconditions.extend(type_postconditions);
 
         Ok(postconditions)
@@ -92,6 +97,42 @@ impl FuncDef {
 }
 
 impl Stmt {
+    pub fn type_subst(
+        &self,
+        type_params: &[String],
+        type_instantiations: &[Type],
+    ) -> Result<Stmt, TypeError> {
+        match self {
+            Stmt::Expr(expr) => {
+                let new_expr = expr.type_subst(type_params, type_instantiations)?;
+                Ok(Stmt::Expr(new_expr))
+            }
+            Stmt::Let {
+                name,
+                typ,
+                mutable,
+                value,
+            } => {
+                let new_type = typ.as_ref().map(|t| t.instantiate(type_params, type_instantiations)).transpose()?;
+                let new_value = value.type_subst(type_params, type_instantiations)?;
+                Ok(Stmt::Let {
+                    name: name.clone(),
+                    typ: new_type,
+                    mutable: *mutable,
+                    value: new_value,
+                })
+            }
+            Stmt::Assign { name, value, op } => {
+                let new_value = value.type_subst(type_params, type_instantiations)?;
+                Ok(Stmt::Assign {
+                    name: name.clone(),
+                    op: *op,
+                    value: new_value,
+                })
+            }
+        }
+    }
+
     pub fn subst(
         &self,
         mapping: &HashMap<String, Expr>,
@@ -150,9 +191,71 @@ impl CallArg {
             }
         }
     }
+
+    pub fn type_subst(
+        &self,
+        type_params: &[String],
+        type_instantiations: &[Type],
+    ) -> Result<CallArg, TypeError> {
+        match self {
+            CallArg::Expr(e) => Ok(CallArg::Expr(e.type_subst(type_params, type_instantiations)?)),
+            CallArg::MutVar { name, typ } => {
+                let new_type = typ.as_ref().map(|t| t.instantiate(type_params, type_instantiations)).transpose()?;
+                Ok(CallArg::MutVar {
+                    name: name.clone(),
+                    typ: new_type,
+                })
+            }
+        }
+    }
 }
 
 impl Expr {
+    pub fn type_subst(
+        &self,
+        type_params: &[String],
+        type_instantiations: &[Type],
+    ) -> Result<Expr, TypeError> {
+        match self {
+            Expr::Literal(literal) => Ok(Expr::Literal(literal.clone())),
+            Expr::Variable { name, typ } => {
+                let new_type = if let Some(t) = typ {
+                    Some(t.instantiate(type_params, type_instantiations)?)
+                } else {
+                    None
+                };
+                Ok(Expr::Variable {
+                    name: name.clone(),
+                    typ: new_type,
+                })
+            }
+            Expr::FunctionCall {
+                name,
+                args,
+                return_type,
+                type_instantiations: call_type_instantiations,
+            } => {
+                let new_args = args
+                    .iter()
+                    .map(|arg| arg.type_subst(type_params, type_instantiations))
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+                let new_return_type =
+                    return_type.as_ref().map(|t| t.instantiate(type_params, type_instantiations)).transpose()?;
+                let new_type_instantiations = call_type_instantiations
+                    .iter()
+                    .map(|t| t.instantiate(type_params, type_instantiations))
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+                Ok(Expr::FunctionCall {
+                    name: name.clone(),
+                    args: new_args,
+                    return_type: new_return_type,
+                    type_instantiations: new_type_instantiations,
+                })
+            }
+            _ => Ok(self.clone()), // Other cases can be implemented similarly
+        }
+    }
+
     pub fn subst(&self, mapping: &HashMap<String, Expr>) -> Result<Expr, TypeError> {
         match self {
             Expr::Literal(literal) => Ok(Expr::Literal(literal.clone())),

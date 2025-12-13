@@ -92,12 +92,6 @@ impl FuncDef {
 fn builtins() -> HashMap<String, FuncDef> {
     // Don't call ops.rs directly here, or we'll end up with infinite recursion
     let mut functions = HashMap::new();
-    let tu32 = Type::basic("u32");
-    let tu64 = Type::basic("u64");
-    let ti32 = Type::basic("i32");
-    let ti64 = Type::basic("i64");
-    let z32 = Type::basic("z32");
-    let z64 = Type::basic("z64");
     let tint = Type::basic("int");
     let tbool = Type::basic("bool");
     let tstr = Type::basic("str");
@@ -247,8 +241,19 @@ fn builtins() -> HashMap<String, FuncDef> {
         "assert".to_owned(),
         FuncDef::simple("assert", from_ref(&tbool), &tvoid),
     );
-    let seq_len = FuncDef::psimple("seq_len", from_ref(&vect), &tint, &["T"]);
-    functions.insert("seq_len".to_owned(), seq_len.clone());
+    let seq_len = FuncDef::psimple("len", from_ref(&vect), &tint, &["T"]);
+    functions.insert("len".to_owned(), seq_len.clone());
+
+    functions.insert(
+        "append".to_owned(),
+        FuncDef::psimple(
+            "append",
+            &[vect.clone(), vect.clone()],
+            &vect,
+            &["T"],
+        ),
+    );
+
     functions.insert(
         "seq_map".to_owned(),
         FuncDef::psimple(

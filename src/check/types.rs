@@ -293,7 +293,12 @@ impl Type {
             expr.typ(),
             self.skeleton(param_list)?
         );
-        assert!(param_list.is_empty());
+
+        if param_list.contains(&self.name) && self.type_args.is_empty() {
+            // type parameter with no conditions
+            return Ok(vec![]);
+        }
+
         match self.name.as_str() {
             "int" | "nat" | "z8" | "z16" | "z32" | "z64" | "i8" | "i16" | "i32" | "i64" | "u8"
             | "u16" | "u32" | "u64" => {

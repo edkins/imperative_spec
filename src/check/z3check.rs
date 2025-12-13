@@ -66,15 +66,32 @@ struct Env {
 }
 
 impl FuncDef {
-    fn z3_func_decl(&self) -> Result<z3::FuncDecl, CheckError> {
+    fn z3_func_name(&self, type_instantiations: &[Type]) -> String {
+        let mut name = self.name.clone();
+        if !type_instantiations.is_empty() {
+            name.push('<');
+            for (i, t) in type_instantiations.iter().enumerate() {
+                name.push_str(&t.z3_datatype_name());
+                if i + 1 < type_instantiations.len() {
+                    name.push(',');
+                }
+            }
+            name.push('>');
+        }
+        name
+    }
+
+    fn z3_func_decl(&self, type_instantiations: &[Type]) -> Result<z3::FuncDecl, CheckError> {
+        assert!(self.type_params.len() == type_instantiations.len());
+        let name = self.z3_func_name(type_instantiations);
         let args = self
             .args
             .iter()
-            .map(|arg| arg.arg_type.to_z3_sort())
+            .map(|arg| arg.arg_type.instantiate(&self.type_params, type_instantiations)?.to_z3_sort(&self.type_params))
             .collect::<Result<Vec<_>, _>>()?;
         let arg_refs = args.iter().collect::<Vec<&z3::Sort>>();
-        let ret_sort = self.return_type.to_z3_sort()?;
-        Ok(z3::FuncDecl::new(self.name.clone(), &arg_refs, &ret_sort))
+        let ret_sort = self.return_type.instantiate(&self.type_params, type_instantiations)?.to_z3_sort(&self.type_params)?;
+        Ok(z3::FuncDecl::new(name, &arg_refs, &ret_sort))
     }
 }
 
@@ -103,14 +120,14 @@ impl CheckedVar {
     //     self.var_type.to_z3_const(&self.z3_name()?)
     // }
 
-    fn new(name: &str, mutable: bool, ty: &Type) -> Self {
+    fn new(name: &str, mutable: bool, ty: &Type, type_params: &[String]) -> Self {
         let z3name = if mutable {
             format!("{}:0", name)
         } else {
             name.to_owned()
         };
         CheckedVar {
-            z3: ty.to_z3_const(&z3name).unwrap(),
+            z3: ty.to_z3_const(&z3name, type_params).unwrap(),
             name: name.to_owned(),
             version: 0,
             max_version: 0,
@@ -132,17 +149,17 @@ impl CheckedVar {
         }
     }
 
-    fn mutate(&mut self) {
+    fn mutate(&mut self, type_params: &[String]) {
         assert!(!self.hidden);
         self.max_version += 1;
         self.version = self.max_version;
         self.z3 = self
             .var_type
-            .to_z3_const(&format!("{}:{}", self.name, self.version))
+            .to_z3_const(&format!("{}:{}", self.name, self.version), type_params)
             .unwrap();
     }
 
-    fn replace(&mut self, mutable: bool, typ: &Type) {
+    fn replace(&mut self, mutable: bool, typ: &Type, type_params: &[String]) {
         self.hidden = false;
         self.max_version += 1;
         self.version = self.max_version;
@@ -150,7 +167,7 @@ impl CheckedVar {
         self.var_type = typ.clone();
         self.z3 = self
             .var_type
-            .to_z3_const(&format!("{}:{}", self.name, self.version))
+            .to_z3_const(&format!("{}:{}", self.name, self.version), type_params)
             .unwrap();
     }
 }
@@ -190,13 +207,13 @@ impl Type {
         name
     }
 
-    fn to_z3_datatype(&self) -> Result<z3::DatatypeSort, CheckError> {
+    fn to_z3_datatype(&self, type_params: &[String]) -> Result<z3::DatatypeSort, CheckError> {
         if self.is_round_seq() {
             if let Some(elem_types) = self.get_round_elem_type_vector() {
                 let datatype_name = self.z3_datatype_name();
                 let mut sorts = vec![];
                 for (i, et) in elem_types.iter().enumerate() {
-                    sorts.push((i.to_string(), et.to_z3_sort()?));
+                    sorts.push((i.to_string(), et.to_z3_sort(type_params)?));
                 }
                 let sorts = sorts
                     .iter()
@@ -214,14 +231,22 @@ impl Type {
                 })
             }
         } else {
+            panic!();
             Err(CheckError {
-                message: format!("Unsupported type for to_z3_sort: {}", self),
+                message: format!("Unsupported type for to_z3_datatype: {} (type params {:?})", self, type_params),
             })
         }
     }
 
-    fn to_z3_sort(&self) -> Result<z3::Sort, CheckError> {
-        if self.is_int() {
+    fn to_z3_sort(&self, type_params: &[String]) -> Result<z3::Sort, CheckError> {
+        if type_params.contains(&self.name) {
+            // TODO: add optional bounds to value to correctly accommodate finite types
+            let datatype_name = format!("__TypeVar_{}__", self.name);
+            let datatype = z3::DatatypeBuilder::new(datatype_name)
+                .variant("TypeVar", vec![("value", z3::DatatypeAccessor::Sort(z3::Sort::int()))])
+                .finish();
+            Ok(datatype.sort)
+        } else if self.is_int() {
             Ok(z3::Sort::int())
         } else if self.is_bool() {
             Ok(z3::Sort::bool())
@@ -231,7 +256,7 @@ impl Type {
             Ok(void_value().get_sort())
         } else if self.is_square_seq() {
             if let Some(elem_type) = self.get_uniform_square_elem_type() {
-                let elem_sort = elem_type.to_z3_sort()?;
+                let elem_sort = elem_type.to_z3_sort(type_params)?;
                 Ok(z3::Sort::seq(&elem_sort))
             } else {
                 Err(CheckError {
@@ -242,11 +267,11 @@ impl Type {
                 })
             }
         } else {
-            Ok(self.to_z3_datatype()?.sort)
+            Ok(self.to_z3_datatype(type_params)?.sort)
         }
     }
 
-    fn to_z3_const(&self, name: &str) -> Result<Dynamic, CheckError> {
+    fn to_z3_const(&self, name: &str, type_params: &[String]) -> Result<Dynamic, CheckError> {
         if self.is_int() {
             Ok(z3::ast::Int::new_const(name).into())
         } else if self.is_bool() {
@@ -264,10 +289,10 @@ impl Type {
                         self
                     ),
                 })?
-                .to_z3_sort()?;
+                .to_z3_sort(type_params)?;
             Ok(z3::ast::Seq::new_const(name, &elem_sort).into())
         } else if self.is_round_seq() {
-            let dt = self.to_z3_datatype()?;
+            let dt = self.to_z3_datatype(type_params)?;
             Ok(z3::ast::Datatype::new_const(name, &dt.sort).into())
         } else {
             Err(CheckError {
@@ -278,7 +303,7 @@ impl Type {
 }
 
 impl Env {
-    fn new(other_funcs: &[FuncDef], attributes: &[FuncAttribute], verbosity: u8) -> Self {
+    fn new(other_funcs: &[FuncDef], attributes: &[FuncAttribute], verbosity: u8, type_params: &[String]) -> Self {
         let sees = attributes
             .iter()
             .filter_map(|attr| {
@@ -295,7 +320,7 @@ impl Env {
             side_effects: HashSet::new(),
             other_funcs: other_funcs.to_owned(),
             verbosity,
-            type_param_list: Vec::new(),
+            type_param_list: type_params.to_owned(),
             sees: sees.to_owned(),
         }
     }
@@ -314,8 +339,8 @@ impl Env {
         Ok(self
             .vars
             .entry(name.to_owned())
-            .and_modify(|info| info.replace(mutable, ty))
-            .or_insert_with(|| CheckedVar::new(name, mutable, ty))
+            .and_modify(|info| info.replace(mutable, ty, &self.type_param_list))
+            .or_insert_with(|| CheckedVar::new(name, mutable, ty, &self.type_param_list))
             .z3
             .clone())
     }
@@ -451,7 +476,7 @@ impl Env {
             });
         }
         let old = info.z3.clone();
-        info.mutate();
+        info.mutate(&self.type_param_list);
         Ok((old, info.z3.clone()))
     }
 
@@ -464,7 +489,7 @@ impl Env {
                 message: format!("Cannot assign to immutable variable: {}", var),
             });
         }
-        info.mutate();
+        info.mutate(&self.type_param_list);
         let new_var = info.z3.clone();
         let conds = info.var_type.type_assertions(
             Expr::Variable {
@@ -527,7 +552,7 @@ impl Env {
         }
     }
 
-    fn enter_call_scope(&self, func: &FuncDef, args: &[Dynamic]) -> Result<Env, CheckError> {
+    fn enter_call_scope(&self, func: &FuncDef, type_instantiations: &[Type], args: &[Dynamic]) -> Result<Env, CheckError> {
         let mut new_env = self.clone();
         if func.args.len() != args.len() {
             return Err(CheckError {
@@ -546,7 +571,7 @@ impl Env {
         }
 
         for (arg, value) in func.args.iter().zip(args.iter()) {
-            let new_var = new_env.insert_var(&arg.name, false, &arg.arg_type)?;
+            let new_var = new_env.insert_var(&arg.name, false, &arg.arg_type.instantiate(&func.type_params, type_instantiations)?)?;
             new_env.assume(new_var.safe_eq(value)?);
             // arg.arg_type.check_value(&new_var, &mut new_env)?;
         }
@@ -619,7 +644,7 @@ fn void_value() -> Dynamic {
     z3::ast::Int::from_i64(0).into()
 }
 
-fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynamic, CheckError> {
+fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env, type_instantiations: &[Type]) -> Result<Dynamic, CheckError> {
     match (name, args.len()) {
         ("==", 2) => Ok(args[0].safe_eq(&args[1])?.into()),
         ("!=", 2) => Ok(args[0].safe_eq(&args[1])?.not().into()),
@@ -664,11 +689,21 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
             env.prints();
             Ok(void_value())
         }
-        ("seq_len", 1) => {
+        ("len", 1) => {
             let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
-                message: "Expected Seq type for seq_len".to_owned(),
+                message: "Expected Seq type for len".to_owned(),
             })?;
             Ok(seq_arg.length().into())
+        }
+        ("append", 2) => {
+            let lhs = args[0].as_seq().ok_or_else(|| CheckError {
+                message: "Expected Seq type for append".to_owned(),
+            })?;
+            let rhs = args[1].as_seq().ok_or_else(|| CheckError {
+                message: "Expected Seq type for append".to_owned(),
+            })?;
+            let new_seq = z3::ast::Seq::concat(&[&lhs, &rhs]);
+            Ok(new_seq.into())
         }
         ("seq_at", 2) => {
             let seq_arg = args[0].as_seq().ok_or_else(|| CheckError {
@@ -701,7 +736,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
         _ => {
             if let Some(user_func) = env.other_funcs.iter().find(|f| f.name == name) {
                 let user_func = user_func.clone(); // clone it because we're doing other things to env and they conflict
-                let func_decl = user_func.z3_func_decl()?;
+                let func_decl = user_func.z3_func_decl(type_instantiations)?;
 
                 let z3_argrefs = args
                     .iter()
@@ -718,7 +753,7 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
 
                 // If function is visible, check it (which will add relevant assumptions)
                 if env.sees.contains(&user_func.name) {
-                    let mut call_env = env.enter_call_scope(&user_func, args)?;
+                    let mut call_env = env.enter_call_scope(&user_func, type_instantiations, args)?;
                     let body_z3_value = user_func.body.z3_check(&mut call_env)?;
                     call_env.assume(ast.safe_eq(&body_z3_value)?);
                     // fold back into main env
@@ -846,7 +881,7 @@ impl Expr {
                 let func = env.get_overloaded_func(name)?;
                 // let func = env.keep_optimizations(&func, args)?;
                 // println!("{}, {:?}", name, args);
-                let preconditions = func.lookup_preconditions(&olds, type_instantiations)?;
+                let preconditions = func.lookup_preconditions(&olds, type_instantiations, &env.type_param_list)?;
                 if env.verbosity >= 2 && !func.preconditions.is_empty() {
                     println!(
                         "Begin precondition check for function call {}, preconditions {:?}",
@@ -860,12 +895,12 @@ impl Expr {
                 if env.verbosity >= 2 && !func.preconditions.is_empty() {
                     println!("End precondition check for function call {}", name);
                 }
-                let ast = z3_function_call(name, &z3args, env)?;
+                let ast = z3_function_call(name, &z3args, env, type_instantiations)?;
 
                 env.assert_exprs(&assertions, "Failed mutable var type postcondition")?;
 
                 let postconditions =
-                    func.postconditions_and_type_postconditions(type_instantiations)?;
+                    func.postconditions_and_type_postconditions(type_instantiations, &env.type_param_list)?;
                 if !postconditions.is_empty() {
                     if env.verbosity >= 2 {
                         println!(
@@ -873,7 +908,7 @@ impl Expr {
                             name, postconditions
                         );
                     }
-                    let mut new_env = env.enter_call_scope(&func, &z3args)?;
+                    let mut new_env = env.enter_call_scope(&func, type_instantiations, &z3args)?;
                     new_env.insert_var_with_value(&func.return_name, &func.return_type, &ast)?;
                     for postcondition in &postconditions {
                         let cond_z3_value = postcondition.z3_check(&mut new_env)?;
@@ -899,7 +934,7 @@ impl Expr {
                     .iter()
                     .map(|elem| elem.z3_check(env))
                     .collect::<Result<Vec<_>, _>>()?;
-                mk_z3_square_sequence(z3elems, elem_type.as_ref().unwrap())
+                mk_z3_square_sequence(z3elems, elem_type.as_ref().unwrap(), &env.type_param_list)
             }
             Expr::RoundSequence { elems } => {
                 let z3elems = elems
@@ -907,7 +942,7 @@ impl Expr {
                     .map(|elem| elem.z3_check(env))
                     .collect::<Result<Vec<_>, _>>()?;
                 let seq_type = self.typ();
-                mk_z3_round_sequence(z3elems, &seq_type)
+                mk_z3_round_sequence(z3elems, &seq_type, &env.type_param_list)
             }
             Expr::Lambda { args, body } => {
                 let mut new_env = env.clone();
@@ -937,7 +972,7 @@ impl Expr {
                     Ok(seq_ast.nth(&z3_index).into())
                 } else {
                     let z3_tuple = seq.z3_check(env)?;
-                    let dt = seq.typ().to_z3_datatype()?;
+                    let dt = seq.typ().to_z3_datatype(&env.type_param_list)?;
                     let index = index.as_literal_u64()? as usize;
                     let accessor =
                         &dt.variants[0]
@@ -977,13 +1012,13 @@ impl Expr {
     }
 }
 
-fn mk_z3_round_sequence(elems: Vec<Dynamic>, seq_type: &Type) -> Result<Dynamic, CheckError> {
+fn mk_z3_round_sequence(elems: Vec<Dynamic>, seq_type: &Type, type_params: &[String]) -> Result<Dynamic, CheckError> {
     if !seq_type.is_round_seq() {
         return Err(CheckError {
             message: format!("Type {} is not a round sequence type", seq_type),
         });
     }
-    let dt = seq_type.to_z3_datatype()?;
+    let dt = seq_type.to_z3_datatype(type_params)?;
     Ok(dt.variants[0].constructor.apply(
         &elems
             .iter()
@@ -992,9 +1027,9 @@ fn mk_z3_round_sequence(elems: Vec<Dynamic>, seq_type: &Type) -> Result<Dynamic,
     ))
 }
 
-fn mk_z3_square_sequence(elems: Vec<Dynamic>, elem_type: &Type) -> Result<Dynamic, CheckError> {
+fn mk_z3_square_sequence(elems: Vec<Dynamic>, elem_type: &Type, type_params: &[String]) -> Result<Dynamic, CheckError> {
     if elems.is_empty() {
-        return Ok(z3::ast::Seq::empty(&elem_type.to_z3_sort()?).into());
+        return Ok(z3::ast::Seq::empty(&elem_type.to_z3_sort(type_params)?).into());
     }
     let z3_units = elems
         .into_iter()
@@ -1012,13 +1047,9 @@ fn z3_check_funcdef(
     if verbosity >= 2 {
         println!("\n\n\nChecking function: {}. New env.", func.name);
     }
-    let mut env = Env::new(other_funcs, &func.attributes, verbosity);
+    let mut env = Env::new(other_funcs, &func.attributes, verbosity, &func.type_params);
     for arg in &func.args {
         env.insert_var(&arg.name, false, &arg.arg_type.skeleton(&func.type_params)?)?;
-        assert!(
-            env.type_param_list.is_empty(),
-            "Type parameters not supported in z3 check yet"
-        );
         // assume the type assertions on the argument
         env.assume_exprs(&arg.arg_type.type_assertions(
             Expr::Variable {
