@@ -1,8 +1,5 @@
 use crate::{
-    check::{
-        builtins::known_builtin,
-        types::TypeError,
-    },
+    check::{builtins::known_builtin, types::TypeError},
     syntax::ast::{Arg, CallArg, Expr, FuncDef, Literal, Type},
 };
 use std::slice::from_ref;
@@ -19,13 +16,20 @@ pub fn big_and(exprs: &[Expr]) -> Result<Expr, TypeError> {
 }
 
 impl FuncDef {
-    pub fn pmake_func_call(&self, args: &[Expr], type_instantiations: &[Type]) -> Result<Expr, TypeError> {
+    pub fn pmake_func_call(
+        &self,
+        args: &[Expr],
+        type_instantiations: &[Type],
+    ) -> Result<Expr, TypeError> {
         assert!(self.type_params.len() == type_instantiations.len());
         Ok(Expr::FunctionCall {
             name: self.name.to_owned(),
             args: args.iter().map(|e| CallArg::Expr(e.clone())).collect(),
             type_instantiations: type_instantiations.to_owned(),
-            return_type: Some(self.return_type.instantiate(&self.type_params, type_instantiations)?),
+            return_type: Some(
+                self.return_type
+                    .instantiate(&self.type_params, type_instantiations)?,
+            ),
         })
     }
 
@@ -61,7 +65,10 @@ impl Expr {
     pub fn tuple_at(&self, index: u64) -> Result<Expr, TypeError> {
         if self.typ().is_round_seq() {
             if index <= self.typ().get_round_seq_length().unwrap() {
-                Ok(Expr::SeqAt { seq: Box::new(self.clone()), index: Box::new(Expr::Literal(Literal::U64(index))) })
+                Ok(Expr::SeqAt {
+                    seq: Box::new(self.clone()),
+                    index: Box::new(Expr::Literal(Literal::U64(index))),
+                })
             } else {
                 Err(TypeError {
                     message: format!(
@@ -75,7 +82,8 @@ impl Expr {
             Err(TypeError {
                 message: format!(
                     "Cannot access index {} of non-tuple type {}",
-                    index, self.typ()
+                    index,
+                    self.typ()
                 ),
             })
         }
@@ -104,7 +112,8 @@ impl Ops for Expr {
     }
 
     fn seq_len(&self) -> Result<Expr, TypeError> {
-        known_builtin("seq_len").pmake_func_call(from_ref(self), &[self.typ().uniform_square_elem_type()?])
+        known_builtin("seq_len")
+            .pmake_func_call(from_ref(self), &[self.typ().uniform_square_elem_type()?])
     }
 
     fn seq_map(&self, f: &Expr) -> Result<Expr, TypeError> {
@@ -112,10 +121,10 @@ impl Ops for Expr {
         assert!(ftype.name == "Lambda");
         assert!(ftype.type_args.len() == 2);
         assert!(ftype.type_args[0].as_type()? == self.typ().uniform_square_elem_type()?);
-        known_builtin("seq_map").pmake_func_call(&[self.clone(), f.clone()], &[
-            ftype.type_args[0].as_type()?,
-            ftype.type_args[1].as_type()?,
-        ])
+        known_builtin("seq_map").pmake_func_call(
+            &[self.clone(), f.clone()],
+            &[ftype.type_args[0].as_type()?, ftype.type_args[1].as_type()?],
+        )
     }
 
     fn seq_foldl(&self, f: &Expr, initial: &Expr) -> Result<Expr, TypeError> {
@@ -125,14 +134,15 @@ impl Ops for Expr {
         assert!(ftype.type_args[0].as_type()? == initial.typ());
         assert!(ftype.type_args[1].as_type()? == self.typ().uniform_square_elem_type()?);
         assert!(ftype.type_args[2].as_type()? == ftype.type_args[0].as_type()?);
-        known_builtin("seq_foldl").pmake_func_call(&[self.clone(), f.clone(), initial.clone()], &[
-            ftype.type_args[0].as_type()?,
-            ftype.type_args[1].as_type()?,
-        ])
+        known_builtin("seq_foldl").pmake_func_call(
+            &[self.clone(), f.clone(), initial.clone()],
+            &[ftype.type_args[0].as_type()?, ftype.type_args[1].as_type()?],
+        )
     }
 
     fn seq_all(&self, predicate: &Expr) -> Result<Expr, TypeError> {
-        let result = self.seq_map(predicate)?
+        let result = self
+            .seq_map(predicate)?
             .seq_foldl(&and_lambda(), &Expr::Literal(Literal::Bool(true)));
         result
     }

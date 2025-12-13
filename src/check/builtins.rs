@@ -1,9 +1,7 @@
 use std::{collections::HashMap, slice::from_ref};
 // don't use std::ops::Ops here to avoid circular dependencies
 
-use crate::{
-    syntax::ast::{Arg, Expr, FuncDef, Literal, Type, TypeArg},
-};
+use crate::syntax::ast::{Arg, Expr, FuncDef, Literal, Type, TypeArg};
 
 thread_local! {
     static BUILTIN_FUNCTIONS: HashMap<String, FuncDef> = builtins();
@@ -56,7 +54,7 @@ pub fn all_builtins() -> HashMap<String, FuncDef> {
     BUILTIN_FUNCTIONS.with(|builtins| builtins.clone())
 }
 
-const DUMMY_BODY: Expr = Expr::Literal(Literal::Unit);  // this isn't correct, but the body should be ignored for builtins
+const DUMMY_BODY: Expr = Expr::Literal(Literal::Unit); // this isn't correct, but the body should be ignored for builtins
 
 impl FuncDef {
     pub fn simple(name: &str, arg_types: &[Type], return_type: &Type) -> Self {
@@ -250,10 +248,7 @@ fn builtins() -> HashMap<String, FuncDef> {
         FuncDef::simple("assert", from_ref(&tbool), &tvoid),
     );
     let seq_len = FuncDef::psimple("seq_len", from_ref(&vect), &tint, &["T"]);
-    functions.insert(
-        "seq_len".to_owned(),
-        seq_len.clone(),
-    );
+    functions.insert("seq_len".to_owned(), seq_len.clone());
     functions.insert(
         "seq_map".to_owned(),
         FuncDef::psimple(
@@ -291,22 +286,29 @@ fn builtins() -> HashMap<String, FuncDef> {
                         typ: Some(tint.clone()),
                     },
                     Expr::zero(),
-                ]).unwrap(),
+                ])
+                .unwrap(),
                 lt.make_func_call(&[
                     Expr::Variable {
                         name: "arg1".to_owned(),
                         typ: Some(tint.clone()),
                     },
-                    seq_len.pmake_func_call(from_ref(&Expr::Variable {
-                        name: "arg0".to_owned(),
-                        typ: Some(vect.clone()),
-                    }), &[vect.clone()]).unwrap(),
-                ]).unwrap(),
+                    seq_len
+                        .pmake_func_call(
+                            from_ref(&Expr::Variable {
+                                name: "arg0".to_owned(),
+                                typ: Some(vect.clone()),
+                            }),
+                            &[vect.clone()],
+                        )
+                        .unwrap(),
+                ])
+                .unwrap(),
             ],
             attributes: vec![],
             postconditions: vec![],
             body: DUMMY_BODY,
-        }
+        },
     );
     functions.insert(
         "=".to_owned(),
@@ -331,9 +333,9 @@ fn builtins() -> HashMap<String, FuncDef> {
             preconditions: vec![],
             postconditions: vec![],
             body: DUMMY_BODY,
-        }
+        },
     );
-    for name in ["+=","-=","*="] {
+    for name in ["+=", "-=", "*="] {
         functions.insert(
             name.to_owned(),
             FuncDef {
@@ -357,7 +359,7 @@ fn builtins() -> HashMap<String, FuncDef> {
                 preconditions: vec![],
                 postconditions: vec![],
                 body: DUMMY_BODY,
-            }
+            },
         );
     }
     functions

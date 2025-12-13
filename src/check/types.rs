@@ -1,7 +1,5 @@
 use crate::{
-    check::{
-        ops::{Ops, big_and},
-    },
+    check::ops::{Ops, big_and},
     syntax::ast::{Arg, Bound, Expr, Literal, Type, TypeArg},
 };
 
@@ -44,21 +42,21 @@ impl Expr {
     pub fn typ(&self) -> Type {
         match self {
             Expr::Literal(lit) => lit.typ(),
-            Expr::Variable { name, typ } => typ.clone().expect(&format!("Variable expression {} must have type", name)),
+            Expr::Variable { name, typ } => typ
+                .clone()
+                .expect(&format!("Variable expression {} must have type", name)),
             Expr::Semicolon(_, expr) => expr.typ(),
-            Expr::FunctionCall { return_type, .. } => {
-                return_type.clone().expect("Function call must have return type")
-            }
-            Expr::SquareSequence { elem_type, .. } => {
-                Type {
-                    name: "Vec".to_owned(),
-                    type_args: vec![TypeArg::Type(
-                        elem_type
-                            .clone()
-                            .expect("Square sequence must have element type"),
-                    )],
-                }
-            }
+            Expr::FunctionCall { return_type, .. } => return_type
+                .clone()
+                .expect("Function call must have return type"),
+            Expr::SquareSequence { elem_type, .. } => Type {
+                name: "Vec".to_owned(),
+                type_args: vec![TypeArg::Type(
+                    elem_type
+                        .clone()
+                        .expect("Square sequence must have element type"),
+                )],
+            },
             Expr::RoundSequence { elems } => {
                 let type_args = elems
                     .iter()
@@ -88,7 +86,9 @@ impl Expr {
                         .expect("SeqAt on non-sequence type")
                         .clone()
                 } else {
-                    let index = index.as_literal_u64().expect("SeqAt index must be literal u64");
+                    let index = index
+                        .as_literal_u64()
+                        .expect("SeqAt index must be literal u64");
                     seq_type
                         .get_round_elem_type(index)
                         .expect("SeqAt on non-sequence type")
@@ -116,7 +116,11 @@ impl TypeArg {
         }
     }
 
-    pub fn instantiate(&self, type_params: &[String], instantiations: &[Type]) -> Result<TypeArg, TypeError> {
+    pub fn instantiate(
+        &self,
+        type_params: &[String],
+        instantiations: &[Type],
+    ) -> Result<TypeArg, TypeError> {
         match self {
             TypeArg::Type(t) => Ok(TypeArg::Type(t.instantiate(type_params, instantiations)?)),
             TypeArg::Bound(b) => Ok(TypeArg::Bound(b.clone())),
@@ -153,7 +157,11 @@ impl Type {
         }
     }
 
-    pub fn instantiate(&self, type_params: &[String], instantiations: &[Type]) -> Result<Type, TypeError> {
+    pub fn instantiate(
+        &self,
+        type_params: &[String],
+        instantiations: &[Type],
+    ) -> Result<Type, TypeError> {
         assert!(type_params.len() == instantiations.len());
         if type_params.contains(&self.name) {
             if !self.type_args.is_empty() {
@@ -279,7 +287,12 @@ impl Type {
         expr: Expr,
         param_list: &[String],
     ) -> Result<Vec<Expr>, TypeError> {
-        assert!(expr.typ() == self.skeleton(param_list)?, "Type assertion expression type {} does not match expected type {}", expr.typ(), self.skeleton(param_list)?);
+        assert!(
+            expr.typ() == self.skeleton(param_list)?,
+            "Type assertion expression type {} does not match expected type {}",
+            expr.typ(),
+            self.skeleton(param_list)?
+        );
         assert!(param_list.is_empty());
         match self.name.as_str() {
             "int" | "nat" | "z8" | "z16" | "z32" | "z64" | "i8" | "i16" | "i32" | "i64" | "u8"
@@ -293,8 +306,7 @@ impl Type {
                 if let Some(len) = self.get_square_seq_length() {
                     conds.push(expr.seq_len()?.eq(&Expr::Literal(Literal::U64(len)))?);
                 }
-                if let Some(lambda) = elem_type.type_lambda(param_list)?
-                {
+                if let Some(lambda) = elem_type.type_lambda(param_list)? {
                     conds.push(expr.seq_all(&lambda)?);
                 }
                 Ok(conds)
@@ -392,10 +404,7 @@ impl Type {
             Ok(t.clone())
         } else {
             Err(TypeError {
-                message: format!(
-                    "Type {} is not a uniform square sequence",
-                    self
-                ),
+                message: format!("Type {} is not a uniform square sequence", self),
             })
         }
     }
@@ -577,10 +586,7 @@ impl Type {
     //     false
     // }
 
-    fn type_lambda(
-        &self,
-        param_list: &[String],
-    ) -> Result<Option<Expr>, TypeError> {
+    fn type_lambda(&self, param_list: &[String]) -> Result<Option<Expr>, TypeError> {
         let more_general_type = self.skeleton(param_list)?;
         let var = Expr::Variable {
             name: "__item__".to_owned(),

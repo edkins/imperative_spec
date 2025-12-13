@@ -145,7 +145,7 @@ impl Expr {
     ) -> std::fmt::Result {
         match self {
             Expr::Literal(literal) => write!(f, "{}", literal),
-            Expr::Variable{name, typ} => {
+            Expr::Variable { name, typ } => {
                 write!(f, "{}", name)?;
                 if let Some(typ) = typ {
                     write!(f, ":{}", typ)
@@ -153,7 +153,12 @@ impl Expr {
                     Ok(())
                 }
             }
-            Expr::FunctionCall { name, args, type_instantiations, return_type } => {
+            Expr::FunctionCall {
+                name,
+                args,
+                type_instantiations,
+                return_type,
+            } => {
                 match name as &str {
                     "==" | "!=" | "<" | "<=" | ">" | ">=" => {
                         strength.open_brace(f, BindingStrength::Comparison)?;
@@ -197,7 +202,7 @@ impl Expr {
                 } else {
                     Ok(())
                 }
-            },
+            }
             Expr::Semicolon(stmt, expr) => {
                 strength.open_brace(f, BindingStrength::Semicolon)?;
                 stmt.fmt(f)?;
@@ -331,7 +336,12 @@ impl Display for Stmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Stmt::Expr(expr) => write!(f, "{}", expr),
-            Stmt::Let { name, mutable, typ, value } => {
+            Stmt::Let {
+                name,
+                mutable,
+                typ,
+                value,
+            } => {
                 if let Some(typ) = typ {
                     if *mutable {
                         write!(f, "let mut {}: {} = {}", name, typ, value)
@@ -413,10 +423,7 @@ mod test {
             },
             body: Expr::FunctionCall {
                 name: "sum".to_owned(),
-                args: vec![
-                    CallArg::Expr(v("a")),
-                    CallArg::Expr(v("b")),
-                ],
+                args: vec![CallArg::Expr(v("a")), CallArg::Expr(v("b"))],
                 type_instantiations: vec![],
                 return_type: None,
             },

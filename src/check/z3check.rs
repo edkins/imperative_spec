@@ -7,10 +7,7 @@ use std::{
 };
 
 use crate::{
-    check::{
-        builtins::lookup_builtin,
-        types::TypeError,
-    },
+    check::{builtins::lookup_builtin, types::TypeError},
     syntax::ast::*,
 };
 use z3::{
@@ -572,7 +569,7 @@ impl Stmt {
                 ..
             } => {
                 let z3_value = value.z3_check(env)?;
-                let inferred_type = typ.clone().unwrap_or_else(||value.typ());
+                let inferred_type = typ.clone().unwrap_or_else(|| value.typ());
                 let z3_var = env.insert_var(name, *mutable, &inferred_type.skeleton(&[])?)?;
                 env.assume(z3_var.safe_eq(&z3_value)?);
                 // check the type
@@ -588,7 +585,9 @@ impl Stmt {
                 )?;
                 Ok(())
             }
-            Stmt::Assign { .. } => unreachable!("Assignments should have been turned into function calls"),
+            Stmt::Assign { .. } => {
+                unreachable!("Assignments should have been turned into function calls")
+            }
         }
     }
 }
@@ -805,7 +804,11 @@ impl CallArg {
             match arg {
                 CallArg::Expr(expr) => result.push(expr.z3_check(env)?),
                 CallArg::MutVar { name, typ } => {
-                    assert!(typ.is_some(), "Mutable call arg {} must have type annotation", name);
+                    assert!(
+                        typ.is_some(),
+                        "Mutable call arg {} must have type annotation",
+                        name
+                    );
                     let (old_z3, new_z3) = env.mutate(name)?;
                     result.push(old_z3);
                     result.push(new_z3);
@@ -815,10 +818,8 @@ impl CallArg {
                         name: name.clone(),
                         typ: Some(var_type.skeleton(&env.type_param_list)?),
                     };
-                    let type_assertions = var_type.type_assertions(
-                        var_expr,
-                        &env.type_param_list,
-                    )?;
+                    let type_assertions =
+                        var_type.type_assertions(var_expr, &env.type_param_list)?;
                     assertions.extend(type_assertions);
                 }
             }
@@ -833,8 +834,13 @@ impl Expr {
         match self {
             Expr::Literal(literal) => literal.z3_check(),
             Expr::Variable { name, .. } => env.get_var(name),
-            Expr::FunctionCall { name, args, type_instantiations, .. } => {
-                let olds = args.iter().map(|arg|arg.to_expr()).collect::<Vec<Expr>>();
+            Expr::FunctionCall {
+                name,
+                args,
+                type_instantiations,
+                ..
+            } => {
+                let olds = args.iter().map(|arg| arg.to_expr()).collect::<Vec<Expr>>();
 
                 let (z3args, assertions) = CallArg::z3_check(args, env)?;
                 let func = env.get_overloaded_func(name)?;
@@ -858,7 +864,8 @@ impl Expr {
 
                 env.assert_exprs(&assertions, "Failed mutable var type postcondition")?;
 
-                let postconditions = func.postconditions_and_type_postconditions(type_instantiations)?;
+                let postconditions =
+                    func.postconditions_and_type_postconditions(type_instantiations)?;
                 if !postconditions.is_empty() {
                     if env.verbosity >= 2 {
                         println!(
@@ -887,10 +894,7 @@ impl Expr {
                 stmt.z3_check(env)?;
                 expr.z3_check(env)
             }
-            Expr::SquareSequence {
-                elems,
-                elem_type,
-            } => {
+            Expr::SquareSequence { elems, elem_type } => {
                 let z3elems = elems
                     .iter()
                     .map(|elem| elem.z3_check(env))
@@ -923,51 +927,52 @@ impl Expr {
                 if seq.typ().is_square_seq() {
                     let z3_seq = seq.z3_check(env)?;
                     let z3_index = int(&index.z3_check(env)?)?;
-                    let seq_ast = z3_seq
-                        .as_seq()
-                        .ok_or_else(|| CheckError {
-                            message: format!(
-                                "Expected Seq type for seq_at, got {:?} of sort {:?}",
-                                z3_seq,
-                                z3_seq.get_sort()
-                            ),
-                        })?;
+                    let seq_ast = z3_seq.as_seq().ok_or_else(|| CheckError {
+                        message: format!(
+                            "Expected Seq type for seq_at, got {:?} of sort {:?}",
+                            z3_seq,
+                            z3_seq.get_sort()
+                        ),
+                    })?;
                     Ok(seq_ast.nth(&z3_index).into())
                 } else {
                     let z3_tuple = seq.z3_check(env)?;
                     let dt = seq.typ().to_z3_datatype()?;
                     let index = index.as_literal_u64()? as usize;
-                    let accessor = &dt.variants[0].accessors.get(index).ok_or_else(|| CheckError {
-                        message: format!(
-                            "Index {} out of bounds for round sequence type {}",
-                            index,
-                            seq.typ()
-                        ),
-                    })?;
+                    let accessor =
+                        &dt.variants[0]
+                            .accessors
+                            .get(index)
+                            .ok_or_else(|| CheckError {
+                                message: format!(
+                                    "Index {} out of bounds for round sequence type {}",
+                                    index,
+                                    seq.typ()
+                                ),
+                            })?;
                     let at_value = accessor.apply(&[&z3_tuple as &dyn z3::ast::Ast]);
                     Ok(at_value)
                 }
-            }
-            // Expr::Cast { expr, to_type } => {
-            //     let (z3_expr, new_expr) = expr.z3_check(env)?;
-            //     if z3_expr.get_sort() != to_type.to_z3_sort()? {
-            //         return Err(CheckError {
-            //             message: format!(
-            //                 "Cannot cast expression of z3 sort {:?} to type {} of z3 sort {:?}",
-            //                 z3_expr.get_sort(),
-            //                 to_type,
-            //                 to_type.to_z3_sort()?
-            //             ),
-            //         });
-            //     }
-            //     Ok((
-            //         z3_expr,
-            //         Expr::Cast {
-            //             expr: Box::new(new_expr),
-            //             to_type: to_type.clone(),
-            //         },
-            //     ))
-            // }
+            } // Expr::Cast { expr, to_type } => {
+              //     let (z3_expr, new_expr) = expr.z3_check(env)?;
+              //     if z3_expr.get_sort() != to_type.to_z3_sort()? {
+              //         return Err(CheckError {
+              //             message: format!(
+              //                 "Cannot cast expression of z3 sort {:?} to type {} of z3 sort {:?}",
+              //                 z3_expr.get_sort(),
+              //                 to_type,
+              //                 to_type.to_z3_sort()?
+              //             ),
+              //         });
+              //     }
+              //     Ok((
+              //         z3_expr,
+              //         Expr::Cast {
+              //             expr: Box::new(new_expr),
+              //             to_type: to_type.clone(),
+              //         },
+              //     ))
+              // }
         }
     }
 }

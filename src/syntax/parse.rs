@@ -309,7 +309,7 @@ fn variable_or_call(input: &str) -> IResult<&str, Expr> {
     let (input, call_opt) = opt(call_suffix(name.clone())).parse(input)?;
     match call_opt {
         Some(call_expr) => Ok((input, call_expr)),
-        None => Ok((input, Expr::Variable{name, typ:None})),
+        None => Ok((input, Expr::Variable { name, typ: None })),
     }
 }
 
@@ -486,9 +486,20 @@ fn expr_tight(input: &str) -> IResult<&str, Expr> {
 
 fn expr_suffixed(input: &str) -> IResult<&str, Expr> {
     let (input, base) = expr_tight(input)?;
-    let (input, index) = opt(delimited(symbol(Symbol::OpenSquare), expr_comma, symbol(Symbol::CloseSquare))).parse(input)?;
+    let (input, index) = opt(delimited(
+        symbol(Symbol::OpenSquare),
+        expr_comma,
+        symbol(Symbol::CloseSquare),
+    ))
+    .parse(input)?;
     if let Some(index) = index {
-        Ok((input, Expr::SeqAt { seq: Box::new(base), index: Box::new(index) }))
+        Ok((
+            input,
+            Expr::SeqAt {
+                seq: Box::new(base),
+                index: Box::new(index),
+            },
+        ))
     } else {
         Ok((input, base))
     }
@@ -561,7 +572,7 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
         let (input, op) = opt(pair(timesdividemod, expr_prefixed)).parse(inp)?;
         inp = input;
 
-        if let Some((sym,rhs)) = op {
+        if let Some((sym, rhs)) = op {
             let new_expr = Expr::FunctionCall {
                 name: sym.to_function_name(),
                 args: vec![CallArg::Expr(exprs.clone()), CallArg::Expr(rhs)],
@@ -673,12 +684,7 @@ fn expr_parenthesized(input: &str) -> IResult<&str, Expr> {
         let (input, comma) = opt(symbol(Symbol::Comma)).parse(input)?;
         if comma.is_some() || elems.len() > 1 {
             // (x,) or (x,y...)
-            Ok((
-                input,
-                Expr::RoundSequence {
-                    elems,
-                },
-            ))
+            Ok((input, Expr::RoundSequence { elems }))
         } else {
             // (x)
             Ok((input, elems.into_iter().next().unwrap()))
@@ -790,7 +796,14 @@ fn arg(input: &str) -> IResult<&str, Arg> {
     let (input, name) = identifier(input)?;
     let (input, _) = symbol(Symbol::Colon)(input)?;
     let (input, arg_type) = typ(input)?;
-    Ok((input, Arg { name, mutable: false, arg_type }))
+    Ok((
+        input,
+        Arg {
+            name,
+            mutable: false,
+            arg_type,
+        },
+    ))
 }
 
 fn named_ret(input: &str) -> IResult<&str, (Option<String>, Type)> {
@@ -822,14 +835,12 @@ fn expr_or_empty(input: &str) -> IResult<&str, Expr> {
 fn attribute_check_decisions(input: &str) -> IResult<&str, FuncAttribute> {
     let (input, _) = specific_identifier("check_decisions")(input)?;
     let (input, decisions) = delimited(
-        symbol(Symbol::OpenParen), separated_list1(
-        symbol(Symbol::Comma),
-        identifier,
-    ), symbol(Symbol::CloseParen)).parse(input)?;
-    Ok((
-        input,
-        FuncAttribute::CheckDecisions(decisions)
-    ))
+        symbol(Symbol::OpenParen),
+        separated_list1(symbol(Symbol::Comma), identifier),
+        symbol(Symbol::CloseParen),
+    )
+    .parse(input)?;
+    Ok((input, FuncAttribute::CheckDecisions(decisions)))
 }
 
 fn attribute(input: &str) -> IResult<&str, FuncAttribute> {
@@ -901,7 +912,7 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
             name,
             type_params: vec![],
             args,
-            return_name: return_name.unwrap_or_else(||"__ret__".to_owned()),
+            return_name: return_name.unwrap_or_else(|| "__ret__".to_owned()),
             return_type,
             preconditions: preconditions.unwrap_or_else(Vec::new),
             postconditions: postconditions.unwrap_or_else(Vec::new),

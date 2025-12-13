@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{check::{builtins::all_builtins, types::TypeError}, syntax::ast::{AssignOp, CallArg, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg}};
+use crate::{
+    check::{builtins::all_builtins, types::TypeError},
+    syntax::ast::{AssignOp, CallArg, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg},
+};
 
 #[derive(Clone)]
 struct DeclaredFuncType {
@@ -29,17 +32,17 @@ struct TypeParamLookup(HashMap<String, Type>);
 impl TypeParamLookup {
     fn translate_type_arg(&self, arg: &TypeArg) -> Result<TypeArg, TypeError> {
         match arg {
-            TypeArg::Type(typ) => {
-                Ok(TypeArg::Type(self.translate_type(typ)?))
-            }
-            TypeArg::Bound(b) => Ok(TypeArg::Bound(*b))
+            TypeArg::Type(typ) => Ok(TypeArg::Type(self.translate_type(typ)?)),
+            TypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
         }
     }
 
     fn translate_type(&self, typ: &Type) -> Result<Type, TypeError> {
         if let Some(t) = self.0.get(&typ.name) {
             if !t.type_args.is_empty() {
-                return Err(TypeError{message: format!("Type parameter {} cannot have type arguments", typ.name)});
+                return Err(TypeError {
+                    message: format!("Type parameter {} cannot have type arguments", typ.name),
+                });
             }
             Ok(t.clone())
         } else {
@@ -91,10 +94,14 @@ impl Expr {
             match lit {
                 Literal::U64(u) => Ok(*u),
                 Literal::I64(i) if *i >= 0 => Ok(*i as u64),
-                _ => Err(TypeError{message: format!("Expected u64 literal, got {}", lit)}),
+                _ => Err(TypeError {
+                    message: format!("Expected u64 literal, got {}", lit),
+                }),
             }
         } else {
-            Err(TypeError{message: format!("Expected literal expression, got {}", self)})
+            Err(TypeError {
+                message: format!("Expected literal expression, got {}", self),
+            })
         }
     }
 }
@@ -112,20 +119,26 @@ impl TypeVars {
         }
         if t0.is_type_var() {
             if t1.occurs_check(&t0.name) {
-                return Err(TypeError{message: format!("Occurs check failed for type variable {}", t0.name)});
+                return Err(TypeError {
+                    message: format!("Occurs check failed for type variable {}", t0.name),
+                });
             }
             self.expansions.insert(t0.name.clone(), t1.clone());
             return Ok(());
         }
         if t1.is_type_var() {
             if t0.occurs_check(&t1.name) {
-                return Err(TypeError{message: format!("Occurs check failed for type variable {}", t1.name)});
+                return Err(TypeError {
+                    message: format!("Occurs check failed for type variable {}", t1.name),
+                });
             }
             self.expansions.insert(t1.name.clone(), t0.clone());
             return Ok(());
         }
         if t0.name != t1.name || t0.type_args.len() != t1.type_args.len() {
-            return Err(TypeError{message: format!("Cannot unify types {} and {}", t0.name, t1.name)});
+            return Err(TypeError {
+                message: format!("Cannot unify types {} and {}", t0.name, t1.name),
+            });
         }
         for (arg0, arg1) in t0.type_args.iter().zip(&t1.type_args) {
             match (arg0, arg1) {
@@ -134,23 +147,32 @@ impl TypeVars {
                 }
                 (TypeArg::Bound(b0), TypeArg::Bound(b1)) => {
                     if b0 != b1 {
-                        return Err(TypeError{message: format!("Cannot unify bound type arguments {} and {}", b0, b1)});
+                        return Err(TypeError {
+                            message: format!("Cannot unify bound type arguments {} and {}", b0, b1),
+                        });
                     }
                 }
                 _ => {
-                    return Err(TypeError{message: format!("Cannot unify type arguments {} and {}", arg0, arg1)});
+                    return Err(TypeError {
+                        message: format!("Cannot unify type arguments {} and {}", arg0, arg1),
+                    });
                 }
             }
         }
         Ok(())
     }
 
-    fn generalize_function(&mut self, func: &DeclaredFuncType) -> Result<FunctionGeneralizationResult, TypeError> {
+    fn generalize_function(
+        &mut self,
+        func: &DeclaredFuncType,
+    ) -> Result<FunctionGeneralizationResult, TypeError> {
         // Generate type variables for each type param
         let mut type_param_lookup = TypeParamLookup::default();
         for param in &func.type_params {
             let var_name = self.fresh_type_var();
-            type_param_lookup.0.insert(param.clone(), Type::basic(&var_name));
+            type_param_lookup
+                .0
+                .insert(param.clone(), Type::basic(&var_name));
         }
 
         let mut arg_types = vec![];
@@ -164,43 +186,75 @@ impl TypeVars {
         })
     }
 
-    fn infer_call_arg(&mut self, arg: &mut CallArg, env: &HMEnv, expected: Option<&Type>) -> Result<Type, TypeError> {
+    fn infer_call_arg(
+        &mut self,
+        arg: &mut CallArg,
+        env: &HMEnv,
+        expected: Option<&Type>,
+    ) -> Result<Type, TypeError> {
         match arg {
             CallArg::Expr(e) => self.infer_expr(e, env, expected),
-            CallArg::MutVar{name, typ} => {
+            CallArg::MutVar { name, typ } => {
                 assert!(typ.is_none());
                 if let Some(t) = env.mutable_vars.get(name) {
                     typ.replace(t.clone());
                     Ok(t.clone())
                 } else {
-                    Err(TypeError{message: format!("Unknown mutable variable: {} in function {}", name, self.debug_func_name)})
+                    Err(TypeError {
+                        message: format!(
+                            "Unknown mutable variable: {} in function {}",
+                            name, self.debug_func_name
+                        ),
+                    })
                 }
             }
         }
     }
 
-    fn infer_expr(&mut self, expr: &mut Expr, env: &HMEnv, expected: Option<&Type>) -> Result<Type, TypeError> {
+    fn infer_expr(
+        &mut self,
+        expr: &mut Expr,
+        env: &HMEnv,
+        expected: Option<&Type>,
+    ) -> Result<Type, TypeError> {
         let actual_type = match expr {
-            Expr::Literal(literal) => {literal.typ()}
+            Expr::Literal(literal) => literal.typ(),
             Expr::Variable { name, typ } => {
                 assert!(typ.is_none());
                 if let Some(t) = env.vars.get(name) {
                     *typ = Some(t.clone());
                     t.clone()
                 } else {
-                    return Err(TypeError{message: format!("Unknown variable: {} in function {}", name, self.debug_func_name)});
+                    return Err(TypeError {
+                        message: format!(
+                            "Unknown variable: {} in function {}",
+                            name, self.debug_func_name
+                        ),
+                    });
                 }
             }
             Expr::Semicolon(stmt, expr) => {
                 let new_env = self.infer_stmt(stmt, env)?;
                 self.infer_expr(expr, &new_env, expected)?
             }
-            Expr::FunctionCall { name, args, type_instantiations, return_type } => {
+            Expr::FunctionCall {
+                name,
+                args,
+                type_instantiations,
+                return_type,
+            } => {
                 assert!(return_type.is_none());
                 assert!(type_instantiations.is_empty());
                 if let Some(func_type) = self.functions.get(name).cloned() {
                     if func_type.arg_types.len() != args.len() {
-                        return Err(TypeError{message: format!("Function {} expects {} arguments, got {}", name, func_type.arg_types.len(), args.len())});
+                        return Err(TypeError {
+                            message: format!(
+                                "Function {} expects {} arguments, got {}",
+                                name,
+                                func_type.arg_types.len(),
+                                args.len()
+                            ),
+                        });
                     }
                     let gen_result = self.generalize_function(&func_type)?;
                     for (arg, expected_type) in args.iter_mut().zip(gen_result.arg_types.iter()) {
@@ -214,7 +268,9 @@ impl TypeVars {
                         .collect();
                     gen_result.ret_type
                 } else {
-                    return Err(TypeError{message: format!("Unknown function: {}", name)});
+                    return Err(TypeError {
+                        message: format!("Unknown function: {}", name),
+                    });
                 }
             }
             Expr::RoundSequence { elems } => {
@@ -243,7 +299,7 @@ impl TypeVars {
                 let mut new_env = env.clone();
                 let mut arg_skels = vec![];
                 for arg in args.iter() {
-                    let arg_skel = arg.arg_type.skeleton(&[])?;  // currently lambdas must declare all their types
+                    let arg_skel = arg.arg_type.skeleton(&[])?; // currently lambdas must declare all their types
                     new_env.vars.insert(arg.name.clone(), arg_skel.clone());
                     arg_skels.push(arg_skel);
                 }
@@ -266,12 +322,20 @@ impl TypeVars {
                 } else if seq_type.is_round_seq() {
                     let index = index.as_literal_u64()?;
                     if index >= seq_type.get_round_seq_length().unwrap() {
-                        return Err(TypeError{message: format!("Index {} out of bounds for sequence of length {}", index, seq_type.get_round_seq_length().unwrap())});
+                        return Err(TypeError {
+                            message: format!(
+                                "Index {} out of bounds for sequence of length {}",
+                                index,
+                                seq_type.get_round_seq_length().unwrap()
+                            ),
+                        });
                     }
                     let elem_type = seq_type.get_round_elem_type(index).unwrap();
                     elem_type.clone()
                 } else {
-                    return Err(TypeError{message: format!("Type {} is not a sequence type", seq_type)});
+                    return Err(TypeError {
+                        message: format!("Type {} is not a sequence type", seq_type),
+                    });
                 }
             }
         };
@@ -288,29 +352,37 @@ impl TypeVars {
                 self.infer_expr(expr, env, None)?;
                 Ok(env.clone())
             }
-            Stmt::Let { name, typ, value, mutable } => {
+            Stmt::Let {
+                name,
+                typ,
+                value,
+                mutable,
+            } => {
                 let styp = typ.as_ref().map(|t| t.skeleton(&[])).transpose()?;
                 let inferred = self.infer_expr(value, env, styp.as_ref())?;
                 let mut new_env = env.clone();
                 new_env.vars.insert(name.clone(), inferred.clone());
                 if *mutable {
                     assert!(typ.is_some());
-                    new_env.mutable_vars.insert(name.clone(), typ.as_ref().unwrap().clone());
+                    new_env
+                        .mutable_vars
+                        .insert(name.clone(), typ.as_ref().unwrap().clone());
                 }
                 Ok(new_env)
             }
             Stmt::Assign { name, op, value } => {
-                *stmt = Stmt::Expr(
-                    Expr::FunctionCall {
-                        name: op.function_name().to_owned(),
-                        args: vec![
-                            CallArg::MutVar{name: name.clone(), typ: None},
-                            CallArg::Expr(value.clone()),
-                        ],
-                        type_instantiations: vec![],
-                        return_type: None,
-                    }
-                );
+                *stmt = Stmt::Expr(Expr::FunctionCall {
+                    name: op.function_name().to_owned(),
+                    args: vec![
+                        CallArg::MutVar {
+                            name: name.clone(),
+                            typ: None,
+                        },
+                        CallArg::Expr(value.clone()),
+                    ],
+                    type_instantiations: vec![],
+                    return_type: None,
+                });
                 self.infer_stmt(stmt, env)
             }
         }
@@ -355,7 +427,7 @@ impl TypeVars {
     fn expand_call_arg(&self, arg: &mut CallArg) -> Result<(), TypeError> {
         match arg {
             CallArg::Expr(e) => self.expand_expr(e),
-            CallArg::MutVar{typ,..} => {
+            CallArg::MutVar { typ, .. } => {
                 if let Some(t) = typ {
                     *t = self.expand_type(t)?;
                 }
@@ -377,7 +449,12 @@ impl TypeVars {
                 self.expand_stmt(stmt)?;
                 self.expand_expr(expr)
             }
-            Expr::FunctionCall { args, return_type, type_instantiations, .. } => {
+            Expr::FunctionCall {
+                args,
+                return_type,
+                type_instantiations,
+                ..
+            } => {
                 for arg in args.iter_mut() {
                     self.expand_call_arg(arg)?;
                 }
@@ -437,7 +514,10 @@ impl CallArg {
     pub fn to_expr(&self) -> Expr {
         match self {
             CallArg::Expr(e) => e.clone(),
-            CallArg::MutVar{name,typ} => Expr::Variable { name: name.clone(), typ: Some(typ.as_ref().unwrap().skeleton(&[]).unwrap()) },
+            CallArg::MutVar { name, typ } => Expr::Variable {
+                name: name.clone(),
+                typ: Some(typ.as_ref().unwrap().skeleton(&[]).unwrap()),
+            },
         }
     }
 }
@@ -461,15 +541,15 @@ impl Type {
     /// etc.
     pub fn skeleton(&self, type_params: &[String]) -> Result<Type, TypeError> {
         match (self.name.as_str(), self.type_args.len()) {
-            ("u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "nat", 0) => Ok(Type::basic("int")),
-            ("bool" | "int" | "str" | "void", 0) => Ok(self.clone()),
-            ("Array", 2) => {
-                Ok(Type {
-                    name: "Vec".to_owned(),
-                    type_args: vec![self.type_args[0].skeleton(type_params)?],
-                })
+            ("u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "nat", 0) => {
+                Ok(Type::basic("int"))
             }
-            ("Vec",1) | ("Tuple", _) | ("Lambda", _) => {
+            ("bool" | "int" | "str" | "void", 0) => Ok(self.clone()),
+            ("Array", 2) => Ok(Type {
+                name: "Vec".to_owned(),
+                type_args: vec![self.type_args[0].skeleton(type_params)?],
+            }),
+            ("Vec", 1) | ("Tuple", _) | ("Lambda", _) => {
                 let skel_args = self
                     .type_args
                     .iter()
@@ -484,7 +564,9 @@ impl Type {
                 if type_params.contains(&self.name) {
                     Ok(Type::basic(&self.name))
                 } else {
-                    Err(TypeError{message: format!("Unknown type: {}", self.name)})
+                    Err(TypeError {
+                        message: format!("Unknown type: {}", self.name),
+                    })
                 }
             }
         }
@@ -522,7 +604,9 @@ pub fn hindley_milner_infer(source_file: &mut SourceFile, verbosity: u8) -> Resu
     // Register builtin functions
     for builtin in all_builtins().values() {
         let declared_type = builtin.skeleton()?;
-        type_vars.functions.insert(builtin.name.clone(), declared_type);
+        type_vars
+            .functions
+            .insert(builtin.name.clone(), declared_type);
     }
 
     // First, register all function declarations
@@ -547,7 +631,8 @@ pub fn hindley_milner_infer(source_file: &mut SourceFile, verbosity: u8) -> Resu
         for pre in &mut func.preconditions {
             local_type_vars.infer_expr(pre, &env, Some(&Type::basic("bool")))?;
         }
-        env.vars.insert(func.return_name.clone(), funcdef.ret_type.clone());
+        env.vars
+            .insert(func.return_name.clone(), funcdef.ret_type.clone());
         for post in &mut func.postconditions {
             local_type_vars.infer_expr(post, &env, Some(&Type::basic("bool")))?;
         }
