@@ -336,6 +336,9 @@ impl Env {
     }
 
     fn insert_var(&mut self, name: &str, mutable: bool, ty: &Type) -> Result<Dynamic, CheckError> {
+        if self.verbosity >= 2 {
+            println!("Inserting variable {} of type {}", name, ty);
+        }
         Ok(self
             .vars
             .entry(name.to_owned())
@@ -356,6 +359,9 @@ impl Env {
             "Variable {} already defined",
             name
         );
+        if self.verbosity >= 2 {
+            println!("Inserting variable {} with value {:?}", name, value);
+        }
         self.vars
             .insert(name.to_owned(), CheckedVar::new_with_value(name, ty, value));
         Ok(())
