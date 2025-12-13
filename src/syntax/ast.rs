@@ -47,11 +47,17 @@ pub enum Literal {
 }
 
 #[derive(Clone)]
+pub enum CallArg {
+    Expr(Expr),
+    MutVar{name: String, typ: Option<Type>},
+}
+
+#[derive(Clone)]
 pub enum Expr {
     Literal(Literal),
     Variable { name: String, typ: Option<Type> },
     Semicolon(Box<Stmt>, Box<Expr>),
-    FunctionCall { name: String, args: Vec<Expr>, type_instantiations: Vec<Type>, return_type: Option<Type> },
+    FunctionCall { name: String, args: Vec<CallArg>, type_instantiations: Vec<Type>, return_type: Option<Type> },
     SquareSequence { elems: Vec<Expr>, elem_type: Option<Type> },
     RoundSequence { elems: Vec<Expr> },
     Lambda {

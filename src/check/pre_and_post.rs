@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{check::types::TypeError, syntax::ast::{Expr, FuncDef, Stmt, Type}};
+use crate::{check::types::TypeError, syntax::ast::{CallArg, Expr, FuncDef, Stmt, Type}};
 
 
 impl FuncDef {
@@ -58,7 +58,10 @@ impl FuncDef {
     }
 
     pub fn postconditions_and_type_postconditions(&self, type_instantiations: &[Type]) -> Result<Vec<Expr>, TypeError> {
+        // Regular postconditions
         let mut postconditions = self.postconditions.clone();
+
+        // Return type postcondition
         let ret_inst = self.return_type.instantiate(&self.type_params, type_instantiations)?;
         let return_var = Expr::Variable {
             name: self.return_name.clone(),
@@ -66,6 +69,7 @@ impl FuncDef {
         };
         let type_postconditions = ret_inst.type_assertions(return_var, &[])?;
         postconditions.extend(type_postconditions);
+
         Ok(postconditions)
     }
 }
@@ -103,6 +107,25 @@ impl Stmt {
     }
 }
 
+impl CallArg {
+    pub fn subst(&self, mapping: &HashMap<String, Expr>) -> Result<CallArg, TypeError> {
+        match self {
+            CallArg::Expr(e) => Ok(CallArg::Expr(e.subst(mapping)?)),
+            CallArg::MutVar { name, typ } => {
+                // TODO: this doesn't really make sense - we can't substitute a mutable thing with an immutable thing
+                if let Some(replacement) = mapping.get(name) {
+                    Ok(CallArg::Expr(replacement.clone()))
+                } else {
+                    Ok(CallArg::MutVar {
+                        name: name.clone(),
+                        typ: typ.clone(),
+                    })
+                }
+            }
+        }
+    }
+}
+
 impl Expr {
     pub fn subst(&self, mapping: &HashMap<String, Expr>) -> Result<Expr, TypeError> {
         match self {
@@ -125,7 +148,7 @@ impl Expr {
                 let new_args = args
                     .iter()
                     .map(|arg| arg.subst(mapping))
-                    .collect::<Result<Vec<Expr>, TypeError>>()?;
+                    .collect::<Result<Vec<_>, TypeError>>()?;
                 Ok(Expr::FunctionCall {
                     name: name.clone(),
                     args: new_args,

@@ -443,6 +443,21 @@ impl Env {
     //     println!();
     // }
 
+    /// Return old and new z3 identifiers
+    fn mutate(&mut self, var: &str) -> Result<(Dynamic, Dynamic), CheckError> {
+        let info = self.vars.get_mut(var).ok_or(CheckError {
+            message: format!("Undefined variable: {}", var),
+        })?;
+        if !info.mutable {
+            return Err(CheckError {
+                message: format!("Cannot mutate immutable variable: {}", var),
+            });
+        }
+        let old = info.z3.clone();
+        info.mutate();
+        Ok((old, info.z3.clone()))
+    }
+
     fn assign(&mut self, var: &str, value: Dynamic) -> Result<(), CheckError> {
         let info = self.vars.get_mut(var).ok_or(CheckError {
             message: format!("Undefined variable: {}", var),
@@ -558,7 +573,7 @@ impl Stmt {
             } => {
                 let z3_value = value.z3_check(env)?;
                 let inferred_type = typ.clone().unwrap_or_else(||value.typ());
-                let z3_var = env.insert_var(name, *mutable, &inferred_type)?;
+                let z3_var = env.insert_var(name, *mutable, &inferred_type.skeleton(&[])?)?;
                 env.assume(z3_var.safe_eq(&z3_value)?);
                 // check the type
                 env.assert_exprs(
@@ -573,11 +588,7 @@ impl Stmt {
                 )?;
                 Ok(())
             }
-            Stmt::Assign { name, value, .. } => {
-                let z3_value = value.z3_check(env)?;
-                env.assign(name, z3_value)?;
-                Ok(())
-            }
+            Stmt::Assign { .. } => unreachable!("Assignments should have been turned into function calls"),
         }
     }
 }
@@ -625,6 +636,25 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env) -> Result<Dynam
         ("/", 2) => Ok((int(&args[0])? / int(&args[1])?).into()),
         ("&&", 2) => Ok((boolean(&args[0])? & boolean(&args[1])?).into()),
         ("||", 2) => Ok((boolean(&args[0])? | boolean(&args[1])?).into()),
+        ("=", 3) => {
+            env.assume(args[1].safe_eq(&args[2])?);
+            Ok(void_value())
+        }
+        ("+=", 3) => {
+            let sum = int(&args[0])? + int(&args[2])?;
+            env.assume(args[1].safe_eq(&sum)?);
+            Ok(void_value())
+        }
+        ("-=", 3) => {
+            let diff = int(&args[0])? - int(&args[2])?;
+            env.assume(args[1].safe_eq(&diff)?);
+            Ok(void_value())
+        }
+        ("*=", 3) => {
+            let prod = int(&args[0])? * int(&args[2])?;
+            env.assume(args[1].safe_eq(&prod)?);
+            Ok(void_value())
+        }
         ("assert", 1) => {
             let bool_arg = boolean(&args[0])?;
             env.assert(&bool_arg, "Assertion failed")?;
@@ -765,6 +795,38 @@ impl Env {
     // }
 }
 
+impl CallArg {
+    /// Returns one thing per arg if it's an expression, or two things ("old" and "new") if it's a mutable variable
+    /// Also returns list of assertions that must be true for variables to satisfy their types
+    fn z3_check(args: &[CallArg], env: &mut Env) -> Result<(Vec<Dynamic>, Vec<Expr>), CheckError> {
+        let mut result = vec![];
+        let mut assertions = vec![];
+        for arg in args {
+            match arg {
+                CallArg::Expr(expr) => result.push(expr.z3_check(env)?),
+                CallArg::MutVar { name, typ } => {
+                    assert!(typ.is_some(), "Mutable call arg {} must have type annotation", name);
+                    let (old_z3, new_z3) = env.mutate(name)?;
+                    result.push(old_z3);
+                    result.push(new_z3);
+
+                    let var_type = typ.as_ref().unwrap();
+                    let var_expr = Expr::Variable {
+                        name: name.clone(),
+                        typ: Some(var_type.skeleton(&env.type_param_list)?),
+                    };
+                    let type_assertions = var_type.type_assertions(
+                        var_expr,
+                        &env.type_param_list,
+                    )?;
+                    assertions.extend(type_assertions);
+                }
+            }
+        }
+        Ok((result, assertions))
+    }
+}
+
 impl Expr {
     fn z3_check(&self, env: &mut Env) -> Result<Dynamic, CheckError> {
         // println!("Z3 checking expr: {}", self);
@@ -772,14 +834,13 @@ impl Expr {
             Expr::Literal(literal) => literal.z3_check(),
             Expr::Variable { name, .. } => env.get_var(name),
             Expr::FunctionCall { name, args, type_instantiations, .. } => {
-                let z3args = args
-                    .iter()
-                    .map(|arg| arg.z3_check(env))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let olds = args.iter().map(|arg|arg.to_expr()).collect::<Vec<Expr>>();
+
+                let (z3args, assertions) = CallArg::z3_check(args, env)?;
                 let func = env.get_overloaded_func(name)?;
                 // let func = env.keep_optimizations(&func, args)?;
                 // println!("{}, {:?}", name, args);
-                let preconditions = func.lookup_preconditions(args, type_instantiations)?;
+                let preconditions = func.lookup_preconditions(&olds, type_instantiations)?;
                 if env.verbosity >= 2 && !func.preconditions.is_empty() {
                     println!(
                         "Begin precondition check for function call {}, preconditions {:?}",
@@ -794,6 +855,8 @@ impl Expr {
                     println!("End precondition check for function call {}", name);
                 }
                 let ast = z3_function_call(name, &z3args, env)?;
+
+                env.assert_exprs(&assertions, "Failed mutable var type postcondition")?;
 
                 let postconditions = func.postconditions_and_type_postconditions(type_instantiations)?;
                 if !postconditions.is_empty() {

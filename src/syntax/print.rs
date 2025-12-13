@@ -118,6 +118,25 @@ impl BindingStrength {
     }
 }
 
+impl CallArg {
+    fn fmt_with_binding_strength(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        strength: BindingStrength,
+    ) -> std::fmt::Result {
+        match self {
+            CallArg::Expr(expr) => expr.fmt_with_binding_strength(f, strength),
+            CallArg::MutVar { name, typ } => {
+                if let Some(typ) = typ {
+                    write!(f, "mut {}: {}", name, typ)
+                } else {
+                    write!(f, "mut {}", name)
+                }
+            }
+        }
+    }
+}
+
 impl Expr {
     fn fmt_with_binding_strength(
         &self,
@@ -395,8 +414,8 @@ mod test {
             body: Expr::FunctionCall {
                 name: "sum".to_owned(),
                 args: vec![
-                    v("a"),
-                    v("b"),
+                    CallArg::Expr(v("a")),
+                    CallArg::Expr(v("b")),
                 ],
                 type_instantiations: vec![],
                 return_type: None,
@@ -446,8 +465,8 @@ mod test {
             body: Expr::FunctionCall {
                 name: "process".to_owned(),
                 args: vec![
-                    v("x"),
-                    Expr::Semicolon(
+                    CallArg::Expr(v("x")),
+                    CallArg::Expr(Expr::Semicolon(
                         Box::new(Stmt::Let {
                             name: "y".to_owned(),
                             mutable: false,
@@ -455,7 +474,7 @@ mod test {
                             value: Expr::Literal(Literal::I64(10)),
                         }),
                         Box::new(v("y")),
-                    ),
+                    )),
                 ],
                 type_instantiations: vec![],
                 return_type: None,

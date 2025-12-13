@@ -424,11 +424,21 @@ fn named_typ(input: &str) -> IResult<&str, Type> {
     Ok((input, Type { name, type_args }))
 }
 
+fn call_arg_mut(input: &str) -> IResult<&str, CallArg> {
+    let (input, name) = preceded(keyword(Word::Mut), identifier).parse(input)?;
+    Ok((input, CallArg::MutVar { name, typ: None }))
+}
+
+fn call_arg_expr(input: &str) -> IResult<&str, CallArg> {
+    let (input, expr) = expr_comma(input)?;
+    Ok((input, CallArg::Expr(expr)))
+}
+
 fn call_suffix(name: String) -> impl Fn(&str) -> IResult<&str, Expr> {
     move |input: &str| {
         let (input, args) = delimited(
             symbol(Symbol::OpenParen),
-            separated_list0(symbol(Symbol::Comma), expr_comma),
+            separated_list0(symbol(Symbol::Comma), alt((call_arg_mut, call_arg_expr))),
             symbol(Symbol::CloseParen),
         )
         .parse(input)?;
@@ -490,7 +500,7 @@ fn expr_prefixed(input: &str) -> IResult<&str, Expr> {
             symbol(Symbol::Minus),
             map(expr_prefixed, |e| Expr::FunctionCall {
                 name: "neg".to_owned(),
-                args: vec![e],
+                args: vec![CallArg::Expr(e)],
                 type_instantiations: vec![],
                 return_type: None,
             }),
@@ -525,6 +535,25 @@ fn cmpop(input: &str) -> IResult<&str, Symbol> {
     .parse(input)
 }
 
+impl Symbol {
+    fn to_function_name(&self) -> String {
+        match self {
+            Symbol::Plus => "+".to_owned(),
+            Symbol::Minus => "-".to_owned(),
+            Symbol::Star => "*".to_owned(),
+            Symbol::Slash => "/".to_owned(),
+            Symbol::Percent => "%".to_owned(),
+            Symbol::EqualEqual => "==".to_owned(),
+            Symbol::NotEqual => "!=".to_owned(),
+            Symbol::Lt => "<".to_owned(),
+            Symbol::Le => "<=".to_owned(),
+            Symbol::Gt => ">".to_owned(),
+            Symbol::Ge => ">=".to_owned(),
+            _ => unreachable!(),
+        }
+    }
+}
+
 fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
     let (input, mut exprs) = expr_prefixed(input)?;
     let mut inp = input;
@@ -532,36 +561,16 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
         let (input, op) = opt(pair(timesdividemod, expr_prefixed)).parse(inp)?;
         inp = input;
 
-        match op {
-            Some((Symbol::Star, rhs)) => {
-                let new_expr = Expr::FunctionCall {
-                    name: "*".to_owned(),
-                    args: vec![exprs.clone(), rhs],
-                    type_instantiations: vec![],
-                    return_type: None,
-                };
-                exprs = new_expr;
-            }
-            Some((Symbol::Slash, rhs)) => {
-                let new_expr = Expr::FunctionCall {
-                    name: "/".to_owned(),
-                    args: vec![exprs.clone(), rhs],
-                    type_instantiations: vec![],
-                    return_type: None,
-                };
-                exprs = new_expr;
-            }
-            Some((Symbol::Percent, rhs)) => {
-                let new_expr = Expr::FunctionCall {
-                    name: "%".to_owned(),
-                    args: vec![exprs.clone(), rhs],
-                    type_instantiations: vec![],
-                    return_type: None,
-                };
-                exprs = new_expr;
-            }
-            None => break,
-            _ => unreachable!(),
+        if let Some((sym,rhs)) = op {
+            let new_expr = Expr::FunctionCall {
+                name: sym.to_function_name(),
+                args: vec![CallArg::Expr(exprs.clone()), CallArg::Expr(rhs)],
+                type_instantiations: vec![],
+                return_type: None,
+            };
+            exprs = new_expr;
+        } else {
+            break;
         }
     }
     Ok((inp, exprs))
@@ -574,42 +583,19 @@ fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
         let (input, op) = opt(pair(plusminus, expr_times_divide_mod)).parse(inp)?;
         inp = input;
 
-        match op {
-            Some((Symbol::Plus, rhs)) => {
-                let new_expr = Expr::FunctionCall {
-                    name: "+".to_owned(),
-                    args: vec![exprs.clone(), rhs],
-                    type_instantiations: vec![],
-                    return_type: None,
-                };
-                exprs = new_expr;
-            }
-            Some((Symbol::Minus, rhs)) => {
-                let new_expr = Expr::FunctionCall {
-                    name: "-".to_owned(),
-                    args: vec![exprs.clone(), rhs],
-                    type_instantiations: vec![],
-                    return_type: None,
-                };
-                exprs = new_expr;
-            }
-            None => break,
-            _ => unreachable!(),
+        if let Some((sym, rhs)) = op {
+            let new_expr = Expr::FunctionCall {
+                name: sym.to_function_name(),
+                args: vec![CallArg::Expr(exprs.clone()), CallArg::Expr(rhs)],
+                type_instantiations: vec![],
+                return_type: None,
+            };
+            exprs = new_expr;
+        } else {
+            break;
         }
     }
     Ok((inp, exprs))
-}
-
-fn cmpop_to_function_name(op: Symbol) -> &'static str {
-    match op {
-        Symbol::EqualEqual => "==",
-        Symbol::NotEqual => "!=",
-        Symbol::Lt => "<",
-        Symbol::Le => "<=",
-        Symbol::Gt => ">",
-        Symbol::Ge => ">=",
-        _ => unreachable!(),
-    }
 }
 
 fn expr_cmp(input: &str) -> IResult<&str, Expr> {
@@ -618,8 +604,8 @@ fn expr_cmp(input: &str) -> IResult<&str, Expr> {
     match cmp_opt {
         Some((sym, rhs)) => {
             let new_expr = Expr::FunctionCall {
-                name: cmpop_to_function_name(sym).to_owned(),
-                args: vec![expr, rhs],
+                name: sym.to_function_name(),
+                args: vec![CallArg::Expr(expr), CallArg::Expr(rhs)],
                 type_instantiations: vec![],
                 return_type: None,
             };
@@ -637,7 +623,7 @@ fn expr_conjunction(input: &str) -> IResult<&str, Expr> {
         Some(rhs) => {
             let new_expr = Expr::FunctionCall {
                 name: "&&".to_owned(),
-                args: vec![expr, rhs],
+                args: vec![CallArg::Expr(expr), CallArg::Expr(rhs)],
                 type_instantiations: vec![],
                 return_type: None,
             };
@@ -655,7 +641,7 @@ fn expr_disjunction(input: &str) -> IResult<&str, Expr> {
         Some(rhs) => {
             let new_expr = Expr::FunctionCall {
                 name: "||".to_owned(),
-                args: vec![expr, rhs],
+                args: vec![CallArg::Expr(expr), CallArg::Expr(rhs)],
                 type_instantiations: vec![],
                 return_type: None,
             };

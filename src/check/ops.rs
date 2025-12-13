@@ -3,7 +3,7 @@ use crate::{
         builtins::known_builtin,
         types::TypeError,
     },
-    syntax::ast::{Arg, Expr, FuncDef, Literal, Type},
+    syntax::ast::{Arg, CallArg, Expr, FuncDef, Literal, Type},
 };
 use std::slice::from_ref;
 
@@ -23,7 +23,7 @@ impl FuncDef {
         assert!(self.type_params.len() == type_instantiations.len());
         Ok(Expr::FunctionCall {
             name: self.name.to_owned(),
-            args: args.to_owned(),
+            args: args.iter().map(|e| CallArg::Expr(e.clone())).collect(),
             type_instantiations: type_instantiations.to_owned(),
             return_type: Some(self.return_type.instantiate(&self.type_params, type_instantiations)?),
         })
@@ -134,7 +134,6 @@ impl Ops for Expr {
     fn seq_all(&self, predicate: &Expr) -> Result<Expr, TypeError> {
         let result = self.seq_map(predicate)?
             .seq_foldl(&and_lambda(), &Expr::Literal(Literal::Bool(true)));
-        println!("seq_all: {:?}", result);
         result
     }
 

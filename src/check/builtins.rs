@@ -309,9 +309,9 @@ fn builtins() -> HashMap<String, FuncDef> {
         }
     );
     functions.insert(
-        "assign".to_owned(),
+        "=".to_owned(),
         FuncDef {
-            name: "assign".to_owned(),
+            name: "=".to_owned(),
             args: vec![
                 Arg {
                     name: "lhs".to_owned(),
@@ -333,7 +333,7 @@ fn builtins() -> HashMap<String, FuncDef> {
             body: DUMMY_BODY,
         }
     );
-    for name in ["add_assign","sub_assign","mul_assign"] {
+    for name in ["+=","-=","*="] {
         functions.insert(
             name.to_owned(),
             FuncDef {

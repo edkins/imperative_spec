@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{check::{builtins::all_builtins, types::TypeError}, syntax::ast::{AssignOp, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg}};
+use crate::{check::{builtins::all_builtins, types::TypeError}, syntax::ast::{AssignOp, CallArg, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg}};
 
 #[derive(Clone)]
 struct DeclaredFuncType {
@@ -20,6 +20,7 @@ struct TypeVars {
 #[derive(Clone, Default)]
 struct HMEnv {
     vars: HashMap<String, Type>,
+    mutable_vars: HashMap<String, Type>,
 }
 
 #[derive(Clone, Default)]
@@ -163,6 +164,21 @@ impl TypeVars {
         })
     }
 
+    fn infer_call_arg(&mut self, arg: &mut CallArg, env: &HMEnv, expected: Option<&Type>) -> Result<Type, TypeError> {
+        match arg {
+            CallArg::Expr(e) => self.infer_expr(e, env, expected),
+            CallArg::MutVar{name, typ} => {
+                assert!(typ.is_none());
+                if let Some(t) = env.mutable_vars.get(name) {
+                    typ.replace(t.clone());
+                    Ok(t.clone())
+                } else {
+                    Err(TypeError{message: format!("Unknown mutable variable: {} in function {}", name, self.debug_func_name)})
+                }
+            }
+        }
+    }
+
     fn infer_expr(&mut self, expr: &mut Expr, env: &HMEnv, expected: Option<&Type>) -> Result<Type, TypeError> {
         let actual_type = match expr {
             Expr::Literal(literal) => {literal.typ()}
@@ -188,7 +204,7 @@ impl TypeVars {
                     }
                     let gen_result = self.generalize_function(&func_type)?;
                     for (arg, expected_type) in args.iter_mut().zip(gen_result.arg_types.iter()) {
-                        self.infer_expr(arg, env, Some(expected_type))?;
+                        self.infer_call_arg(arg, env, Some(expected_type))?;
                     }
                     return_type.replace(gen_result.ret_type.clone());
                     *type_instantiations = func_type
@@ -272,11 +288,15 @@ impl TypeVars {
                 self.infer_expr(expr, env, None)?;
                 Ok(env.clone())
             }
-            Stmt::Let { name, typ, value, .. } => {
+            Stmt::Let { name, typ, value, mutable } => {
                 let styp = typ.as_ref().map(|t| t.skeleton(&[])).transpose()?;
                 let inferred = self.infer_expr(value, env, styp.as_ref())?;
                 let mut new_env = env.clone();
                 new_env.vars.insert(name.clone(), inferred.clone());
+                if *mutable {
+                    assert!(typ.is_some());
+                    new_env.mutable_vars.insert(name.clone(), typ.as_ref().unwrap().clone());
+                }
                 Ok(new_env)
             }
             Stmt::Assign { name, op, value } => {
@@ -284,8 +304,8 @@ impl TypeVars {
                     Expr::FunctionCall {
                         name: op.function_name().to_owned(),
                         args: vec![
-                            Expr::Variable { name: name.clone(), typ: None },
-                            value.clone(),
+                            CallArg::MutVar{name: name.clone(), typ: None},
+                            CallArg::Expr(value.clone()),
                         ],
                         type_instantiations: vec![],
                         return_type: None,
@@ -332,6 +352,18 @@ impl TypeVars {
         }
     }
 
+    fn expand_call_arg(&self, arg: &mut CallArg) -> Result<(), TypeError> {
+        match arg {
+            CallArg::Expr(e) => self.expand_expr(e),
+            CallArg::MutVar{typ,..} => {
+                if let Some(t) = typ {
+                    *t = self.expand_type(t)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn expand_expr(&self, expr: &mut Expr) -> Result<(), TypeError> {
         match expr {
             Expr::Literal(_) => Ok(()),
@@ -347,7 +379,7 @@ impl TypeVars {
             }
             Expr::FunctionCall { args, return_type, type_instantiations, .. } => {
                 for arg in args.iter_mut() {
-                    self.expand_expr(arg)?;
+                    self.expand_call_arg(arg)?;
                 }
                 if let Some(t) = return_type {
                     *t = self.expand_type(t)?;
@@ -401,13 +433,22 @@ impl TypeVars {
     }
 }
 
+impl CallArg {
+    pub fn to_expr(&self) -> Expr {
+        match self {
+            CallArg::Expr(e) => e.clone(),
+            CallArg::MutVar{name,typ} => Expr::Variable { name: name.clone(), typ: Some(typ.as_ref().unwrap().skeleton(&[]).unwrap()) },
+        }
+    }
+}
+
 impl AssignOp {
     fn function_name(&self) -> &'static str {
         match self {
-            AssignOp::Assign => "assign",
-            AssignOp::AddAssign => "add_assign",
-            AssignOp::SubAssign => "sub_assign",
-            AssignOp::MulAssign => "mul_assign",
+            AssignOp::Assign => "=",
+            AssignOp::AddAssign => "+=",
+            AssignOp::SubAssign => "-=",
+            AssignOp::MulAssign => "*=",
         }
     }
 }
