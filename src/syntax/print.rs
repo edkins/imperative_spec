@@ -134,7 +134,7 @@ impl Expr {
                     Ok(())
                 }
             }
-            Expr::FunctionCall { name, args, type_instantiations } => match name as &str {
+            Expr::FunctionCall { name, args, type_instantiations, .. } => match name as &str {
                 "==" | "!=" | "<" | "<=" | ">" | ">=" => {
                     strength.open_brace(f, BindingStrength::Comparison)?;
                     args[0].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
@@ -201,6 +201,23 @@ impl Expr {
                 }
                 write!(f, ")")
             }
+            Expr::Lambda { args, body } => {
+                write!(f, "|")?;
+                for (i, arg) in args.iter().enumerate() {
+                    write!(f, "{}: {}", arg.name, arg.arg_type)?;
+                    if i != args.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "| ")?;
+                body.fmt_with_binding_strength(f, BindingStrength::NeverBracket)
+            }
+            Expr::SeqAt { seq, index } => {
+                seq.fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
+                write!(f, "[")?;
+                index.fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
+                write!(f, "]")
+            }
         }
     }
 }
@@ -227,10 +244,26 @@ impl Display for Arg {
     }
 }
 
+impl Display for FuncAttribute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FuncAttribute::CheckDecisions(decisions) => {
+                writeln!(f, "#[check_decisions({})]", decisions.join(", "))
+            }
+            FuncAttribute::Sees(module) => {
+                writeln!(f, "#[sees({})]", module)
+            }
+            FuncAttribute::SideEffect(effect) => {
+                writeln!(f, "#[side_effect({})]", effect)
+            }
+        }
+    }
+}
+
 impl Display for FuncDef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for attrib in &self.attributes {
-            writeln!(f, "#[{}]", attrib)?;
+            writeln!(f, "{}", attrib)?;
         }
         write!(f, "fn {}(", self.name)?;
         for (i, arg) in self.args.iter().enumerate() {
@@ -239,11 +272,7 @@ impl Display for FuncDef {
                 write!(f, ", ")?;
             }
         }
-        if let Some(return_name) = &self.return_name {
-            writeln!(f, ") -> ({}:{})", return_name, self.return_type)?;
-        } else {
-            writeln!(f, ") -> {}", self.return_type)?;
-        }
+        writeln!(f, ") -> ({}:{})", self.return_name, self.return_type)?;
         if !self.preconditions.is_empty() {
             write!(f, "requires ")?;
             for (i, precond) in self.preconditions.iter().enumerate() {
@@ -259,16 +288,6 @@ impl Display for FuncDef {
             for (i, postcond) in self.postconditions.iter().enumerate() {
                 postcond.fmt_with_binding_strength(f, BindingStrength::Comma)?;
                 if i != self.postconditions.len() - 1 {
-                    write!(f, ", ")?;
-                }
-            }
-            writeln!(f)?;
-        }
-        if !self.sees.is_empty() {
-            write!(f, "sees ")?;
-            for (i, module) in self.sees.iter().enumerate() {
-                write!(f, "{}", module)?;
-                if i != self.sees.len() - 1 {
                     write!(f, ", ")?;
                 }
             }
@@ -360,8 +379,7 @@ mod test {
             ],
             preconditions: vec![],
             postconditions: vec![],
-            sees: vec![],
-            return_name: None,
+            return_name: "__ret__".to_owned(),
             return_type: Type {
                 name: "i32".to_owned(),
                 type_args: vec![],
@@ -373,6 +391,7 @@ mod test {
                     v("b"),
                 ],
                 type_instantiations: vec![],
+                return_type: None,
             },
         };
 
@@ -415,8 +434,7 @@ mod test {
             },
             preconditions: vec![],
             postconditions: vec![],
-            sees: vec![],
-            return_name: None,
+            return_name: "__ret__".to_owned(),
             body: Expr::FunctionCall {
                 name: "process".to_owned(),
                 args: vec![
@@ -432,6 +450,7 @@ mod test {
                     ),
                 ],
                 type_instantiations: vec![],
+                return_type: None,
             },
         };
 

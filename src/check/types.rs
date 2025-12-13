@@ -1,11 +1,29 @@
 use crate::{
     check::{
         ops::{Ops, big_and},
-        ztype_ast::TExpr,
-        ztype_inference::TypeError,
     },
-    syntax::ast::{Arg, Bound, Literal, Type, TypeArg},
+    syntax::ast::{Arg, Bound, Expr, Literal, Type, TypeArg},
 };
+
+#[derive(Debug)]
+pub struct TypeError {
+    pub message: String,
+}
+
+impl std::fmt::Display for TypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TypeError: {}", self.message)
+    }
+}
+impl std::error::Error for TypeError {}
+
+impl TypeError {
+    pub fn with_context(self, context: &str) -> TypeError {
+        TypeError {
+            message: format!("{} {}", context, self.message),
+        }
+    }
+}
 
 // impl Bound {
 //     pub fn as_expr(&self) -> Result<TExpr, TypeError> {
@@ -22,13 +40,72 @@ use crate::{
 //     }
 // }
 
-impl TypeArg {
-    fn condless(&self) -> bool {
+impl Expr {
+    pub fn typ(&self) -> Type {
         match self {
-            TypeArg::Type(t) => t.condless(),
-            TypeArg::Bound(_) => true,
+            Expr::Literal(lit) => lit.typ(),
+            Expr::Variable { name, typ } => typ.clone().expect(&format!("Variable expression {} must have type", name)),
+            Expr::Semicolon(_, expr) => expr.typ(),
+            Expr::FunctionCall { return_type, .. } => {
+                return_type.clone().expect("Function call must have return type")
+            }
+            Expr::SquareSequence { elem_type, .. } => {
+                Type {
+                    name: "Vec".to_owned(),
+                    type_args: vec![TypeArg::Type(
+                        elem_type
+                            .clone()
+                            .expect("Square sequence must have element type"),
+                    )],
+                }
+            }
+            Expr::RoundSequence { elems } => {
+                let type_args = elems
+                    .iter()
+                    .map(|e| TypeArg::Type(e.typ()))
+                    .collect::<Vec<TypeArg>>();
+                Type {
+                    name: "Tuple".to_owned(),
+                    type_args,
+                }
+            }
+            Expr::Lambda { args, body } => {
+                let mut type_args = args
+                    .iter()
+                    .map(|arg| TypeArg::Type(arg.arg_type.clone()))
+                    .collect::<Vec<TypeArg>>();
+                type_args.push(TypeArg::Type(body.typ()));
+                Type {
+                    name: "Lambda".to_owned(),
+                    type_args,
+                }
+            }
+            Expr::SeqAt { seq, index } => {
+                let seq_type = seq.typ();
+                if seq_type.is_square_seq() {
+                    seq_type
+                        .get_uniform_square_elem_type()
+                        .expect("SeqAt on non-sequence type")
+                        .clone()
+                } else {
+                    let index = index.as_literal_u64().expect("SeqAt index must be literal u64");
+                    seq_type
+                        .get_round_elem_type(index)
+                        .expect("SeqAt on non-sequence type")
+                        .clone()
+                }
+            }
         }
     }
+}
+
+impl TypeArg {
+    // fn condless(&self) -> bool {
+    //     match self {
+    //         TypeArg::Type(t) => t.condless(),
+    //         TypeArg::Bound(_) => true,
+    //     }
+    // }
 
     fn as_type(&self) -> Result<Type, TypeError> {
         match self {
@@ -50,111 +127,124 @@ impl Type {
     //     self.type_assertions(expr)
     // }
 
-    pub fn var(&self, name: &str) -> TExpr {
-        TExpr::Variable {
+    pub fn var(&self, name: &str) -> Expr {
+        Expr::Variable {
             name: name.to_owned(),
-            typ: self.clone(),
+            typ: Some(self.clone()),
         }
     }
 
-    fn most_general_type_same_size(&self, param_list: &[String]) -> Result<Type, TypeError> {
-        if param_list.contains(&self.name) {
-            if self.type_args.is_empty() {
-                Ok(Type {
-                    name: self.name.clone(),
-                    type_args: vec![],
-                })
-            } else {
-                Err(TypeError {
-                    message: format!(
-                        "Cannot generalize parameterized type {} with parameters",
-                        self
-                    ),
-                })
-            }
-        } else {
-            match (self.name.as_str(), self.type_args.len()) {
-                ("u8" | "i8" | "z8", 0) => Ok(Type::basic("z8")),
-                ("u16" | "i16" | "z16", 0) => Ok(Type::basic("z16")),
-                ("u32" | "i32" | "z32", 0) => Ok(Type::basic("z32")),
-                ("u64" | "i64" | "z64", 0) => Ok(Type::basic("z64")),
-                ("int" | "nat", 0) => Ok(Type::basic("int")),
-                ("str", 0) => Ok(Type::basic("str")),
-                ("bool", 0) => Ok(Type::basic("bool")),
-                ("void", 0) => Ok(Type::basic("void")),
-                ("Tuple", _) => {
-                    let type_args = self.type_args.iter()
-                    .map(|ta| ta.as_type().and_then(|t| t.most_general_type_same_size(param_list)))
-                    .collect::<Result<Vec<Type>, TypeError>>()?;
-                    Ok(Type {
-                        name: "Tuple".to_owned(),
-                        type_args: type_args.into_iter().map(TypeArg::Type).collect(),
-                    })
-                }
-                ("Vec", 1) | ("Array", 2) => {
-                    // ignore size for Array
-                    let elem_type = self.type_args[0].as_type()?.most_general_type_same_size(param_list)?;
-                    Ok(Type {
-                        name: "Vec".to_owned(),
-                        type_args: vec![TypeArg::Type(elem_type)],
-                    })
-                }
-                ("Lambda", _) => {
-                    // Don't mess with lambdas for now
-                    Ok(self.clone())
-                }
-                _ => Err(TypeError {
-                    message: format!(
-                        "Cannot generalize unknown type {} to most general",
-                        self
-                    ),
-                }),
-            }
+    pub fn lambda(arg_types: &[Type], ret_type: &Type) -> Type {
+        Type {
+            name: "Lambda".to_owned(),
+            type_args: arg_types
+                .iter()
+                .cloned()
+                .map(TypeArg::Type)
+                .chain(std::iter::once(TypeArg::Type(ret_type.clone())))
+                .collect(),
         }
     }
 
-    pub fn most_general_type(&self, param_list: &[String]) -> Result<Type, TypeError> {
-        if self.is_int() {
-            Ok(Type::basic("int"))
-        } else {
-            // TODO: do we need to special-case tuples here?
-            // Right now the most general form of (u32, u64) is (z32, z64) not (int, int)
-            let t = self.most_general_type_same_size(param_list)?;
-            Ok(t)
-        }
-    }
+    // fn most_general_type_same_size(&self, param_list: &[String]) -> Result<Type, TypeError> {
+    //     if param_list.contains(&self.name) {
+    //         if self.type_args.is_empty() {
+    //             Ok(Type {
+    //                 name: self.name.clone(),
+    //                 type_args: vec![],
+    //             })
+    //         } else {
+    //             Err(TypeError {
+    //                 message: format!(
+    //                     "Cannot generalize parameterized type {} with parameters",
+    //                     self
+    //                 ),
+    //             })
+    //         }
+    //     } else {
+    //         match (self.name.as_str(), self.type_args.len()) {
+    //             ("u8" | "i8" | "z8", 0) => Ok(Type::basic("z8")),
+    //             ("u16" | "i16" | "z16", 0) => Ok(Type::basic("z16")),
+    //             ("u32" | "i32" | "z32", 0) => Ok(Type::basic("z32")),
+    //             ("u64" | "i64" | "z64", 0) => Ok(Type::basic("z64")),
+    //             ("int" | "nat", 0) => Ok(Type::basic("int")),
+    //             ("str", 0) => Ok(Type::basic("str")),
+    //             ("bool", 0) => Ok(Type::basic("bool")),
+    //             ("void", 0) => Ok(Type::basic("void")),
+    //             ("Tuple", _) => {
+    //                 let type_args = self.type_args.iter()
+    //                 .map(|ta| ta.as_type().and_then(|t| t.most_general_type_same_size(param_list)))
+    //                 .collect::<Result<Vec<Type>, TypeError>>()?;
+    //                 Ok(Type {
+    //                     name: "Tuple".to_owned(),
+    //                     type_args: type_args.into_iter().map(TypeArg::Type).collect(),
+    //                 })
+    //             }
+    //             ("Vec", 1) | ("Array", 2) => {
+    //                 // ignore size for Array
+    //                 let elem_type = self.type_args[0].as_type()?.most_general_type_same_size(param_list)?;
+    //                 Ok(Type {
+    //                     name: "Vec".to_owned(),
+    //                     type_args: vec![TypeArg::Type(elem_type)],
+    //                 })
+    //             }
+    //             ("Lambda", _) => {
+    //                 // Don't mess with lambdas for now
+    //                 Ok(self.clone())
+    //             }
+    //             _ => Err(TypeError {
+    //                 message: format!(
+    //                     "Cannot generalize unknown type {} to most general",
+    //                     self
+    //                 ),
+    //             }),
+    //         }
+    //     }
+    // }
 
-    pub fn condless(&self) -> bool {
-        match (self.name.as_str(), self.type_args.len()) {
-            ("int" | "z8" | "z16" | "z32" | "z64" | "str" | "bool" | "void", 0) => true,
-            ("Tuple", _) => {
-                assert!(self.type_args.len() > 0);
-                self.type_args.iter().all(TypeArg::condless)
-            }
-            ("Array", 2) => self.type_args.iter().all(TypeArg::condless),
-            ("Vec", 1) => self.type_args.iter().all(TypeArg::condless),
-            ("Lambda", _) => {
-                for arg in &self.type_args {
-                    match arg {
-                        TypeArg::Type(t) => {
-                            if !t.condless() {
-                                return false;
-                            }
-                        }
-                        TypeArg::Bound(_) => {}
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    }
+    // pub fn most_general_type(&self, param_list: &[String]) -> Result<Type, TypeError> {
+    //     if self.is_int() {
+    //         Ok(Type::basic("int"))
+    //     } else {
+    //         // TODO: do we need to special-case tuples here?
+    //         // Right now the most general form of (u32, u64) is (z32, z64) not (int, int)
+    //         let t = self.most_general_type_same_size(param_list)?;
+    //         Ok(t)
+    //     }
+    // }
+
+    // pub fn condless(&self) -> bool {
+    //     match (self.name.as_str(), self.type_args.len()) {
+    //         ("int" | "z8" | "z16" | "z32" | "z64" | "str" | "bool" | "void", 0) => true,
+    //         ("Tuple", _) => {
+    //             assert!(self.type_args.len() > 0);
+    //             self.type_args.iter().all(TypeArg::condless)
+    //         }
+    //         ("Array", 2) => self.type_args.iter().all(TypeArg::condless),
+    //         ("Vec", 1) => self.type_args.iter().all(TypeArg::condless),
+    //         ("Lambda", _) => {
+    //             for arg in &self.type_args {
+    //                 match arg {
+    //                     TypeArg::Type(t) => {
+    //                         if !t.condless() {
+    //                             return false;
+    //                         }
+    //                     }
+    //                     TypeArg::Bound(_) => {}
+    //                 }
+    //             }
+    //             true
+    //         }
+    //         _ => false,
+    //     }
+    // }
 
     pub fn type_assertions(
         &self,
-        expr: TExpr,
+        expr: Expr,
         param_list: &[String],
-    ) -> Result<Vec<TExpr>, TypeError> {
+    ) -> Result<Vec<Expr>, TypeError> {
+        assert!(expr.typ() == self.skeleton(param_list)?, "Type assertion expression type {} does not match expected type {}", expr.typ(), self.skeleton(param_list)?);
         match self.name.as_str() {
             "int" | "nat" | "z8" | "z16" | "z32" | "z64" | "i8" | "i16" | "i32" | "i64" | "u8"
             | "u16" | "u32" | "u64" => {
@@ -163,14 +253,7 @@ impl Type {
             }
             "Vec" | "Array" => {
                 // TODO: check array lens also
-                let new_type = self.most_general_type(param_list)?;
                 let elem_type = self.get_uniform_square_elem_type().ok_or_else(|| TypeError{
-                    message: format!(
-                        "Type {} should have exactly one type argument",
-                        self.name
-                    ),
-                })?;
-                let new_elem_type = new_type.get_uniform_square_elem_type().ok_or_else(|| TypeError{
                     message: format!(
                         "Type {} should have exactly one type argument",
                         self.name
@@ -178,11 +261,11 @@ impl Type {
                 })?;
                 let mut conds = vec![];
                 if let Some(len) = self.get_square_seq_length() {
-                    conds.push(expr.cast(new_type.clone()).seq_len()?.eq(&TExpr::Literal(Literal::U64(len)))?);
+                    conds.push(expr.seq_len()?.eq(&Expr::Literal(Literal::U64(len)))?);
                 }
-                if let Some(lambda) = elem_type.type_lambda(&new_elem_type, param_list)?
+                if let Some(lambda) = elem_type.type_lambda(param_list)?
                 {
-                    conds.push(expr.cast(new_type).seq_all(&lambda)?);
+                    conds.push(expr.seq_all(&lambda)?);
                 }
                 Ok(conds)
             }
@@ -220,7 +303,7 @@ impl Type {
             }
             "str" | "bool" | "void" => Ok(vec![]),
             "Lambda" => {
-                if self.condless() {
+                if *self == self.skeleton(param_list)? {
                     Ok(vec![])
                 } else {
                     Err(TypeError {
@@ -430,47 +513,41 @@ impl Type {
     //     false
     // }
 
-    pub fn compatible_with(&self, other: &Type) -> bool {
-        if self == other {
-            return true;
-        }
-        if self.is_int() && other.is_int() {
-            return true;
-        }
-        // if self.is_empty_seq() && other.is_named_seq() {
-        //     return true;
-        // }
-        // if self.is_named_seq() && other.is_empty_seq() {
-        //     return true;
-        // }
-        // if let Some(self_elem) = self.get_named_seq()
-        //     && let Some(other_elem) = other.get_named_seq()
-        // {
-        //     return self_elem.compatible_with(other_elem);
-        // }
-        false
-    }
+    // pub fn compatible_with(&self, other: &Type) -> bool {
+    //     if self == other {
+    //         return true;
+    //     }
+    //     if self.is_int() && other.is_int() {
+    //         return true;
+    //     }
+    //     // if self.is_empty_seq() && other.is_named_seq() {
+    //     //     return true;
+    //     // }
+    //     // if self.is_named_seq() && other.is_empty_seq() {
+    //     //     return true;
+    //     // }
+    //     // if let Some(self_elem) = self.get_named_seq()
+    //     //     && let Some(other_elem) = other.get_named_seq()
+    //     // {
+    //     //     return self_elem.compatible_with(other_elem);
+    //     // }
+    //     false
+    // }
 
     fn type_lambda(
         &self,
-        more_general_type: &Type,
         param_list: &[String],
-    ) -> Result<Option<TExpr>, TypeError> {
-        assert!(
-            self.compatible_with(more_general_type),
-            "Type {} is not compatible with {}",
-            self,
-            more_general_type
-        );
-        let var = TExpr::Variable {
+    ) -> Result<Option<Expr>, TypeError> {
+        let more_general_type = self.skeleton(param_list)?;
+        let var = Expr::Variable {
             name: "__item__".to_owned(),
-            typ: more_general_type.clone(),
+            typ: Some(more_general_type.clone()),
         };
         let conds = self.type_assertions(var, param_list)?;
         if conds.is_empty() {
             return Ok(None);
         }
-        Ok(Some(TExpr::Lambda {
+        Ok(Some(Expr::Lambda {
             args: vec![Arg {
                 name: "__item__".to_owned(),
                 mutable: false,
@@ -497,19 +574,31 @@ fn lookup_int_bounds(name: &str) -> (Bound, Bound) {
     }
 }
 
-fn bounds_to_expr(lower: Bound, upper: Bound, expr: TExpr) -> Vec<TExpr> {
+fn bounds_to_expr(lower: Bound, upper: Bound, expr: Expr) -> Vec<Expr> {
     let mut result = vec![];
     match lower {
         Bound::MinusInfinity => {}
-        Bound::I64(i) => result.push(expr.ge(&TExpr::Literal(Literal::I64(i))).unwrap()),
-        Bound::U64(u) => result.push(expr.ge(&TExpr::Literal(Literal::U64(u))).unwrap()),
+        Bound::I64(i) => result.push(expr.ge(&Expr::Literal(Literal::I64(i))).unwrap()),
+        Bound::U64(u) => result.push(expr.ge(&Expr::Literal(Literal::U64(u))).unwrap()),
         Bound::PlusInfinity => unreachable!(),
     }
     match upper {
         Bound::PlusInfinity => {}
-        Bound::I64(i) => result.push(expr.le(&TExpr::Literal(Literal::I64(i))).unwrap()),
-        Bound::U64(u) => result.push(expr.le(&TExpr::Literal(Literal::U64(u))).unwrap()),
+        Bound::I64(i) => result.push(expr.le(&Expr::Literal(Literal::I64(i))).unwrap()),
+        Bound::U64(u) => result.push(expr.le(&Expr::Literal(Literal::U64(u))).unwrap()),
         Bound::MinusInfinity => unreachable!(),
     }
     result
+}
+
+impl Literal {
+    pub fn typ(&self) -> Type {
+        match self {
+            Literal::Unit => Type::basic("void"),
+            Literal::U64(_) => Type::basic("int"),
+            Literal::I64(_) => Type::basic("int"),
+            Literal::Str(_) => Type::basic("str"),
+            Literal::Bool(_) => Type::basic("bool"),
+        }
+    }
 }

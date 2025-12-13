@@ -1,0 +1,184 @@
+use std::collections::HashMap;
+
+use crate::{check::types::TypeError, syntax::ast::{Expr, FuncDef, Stmt}};
+
+
+impl FuncDef {
+    pub fn lookup_preconditions(&self, args: &[Expr]) -> Result<Vec<Expr>, TypeError> {
+        if self.args.len() != args.len() {
+            return Err(TypeError {
+                message: format!(
+                    "Wrong number of arguments: expected {}, got {}",
+                    self.args.len(),
+                    args.len()
+                ),
+            });
+        }
+        let mut compatible = true;
+
+        let mut preconditions = vec![];
+
+        for (arg, param) in args.iter().zip(&self.args) {
+            if arg.typ() != param.arg_type.skeleton(&self.type_params)? {
+                compatible = false;
+                break;
+            }
+            preconditions.extend_from_slice(
+                &param
+                    .arg_type
+                    .type_assertions(arg.clone(), &self.type_params)?,
+            );
+        }
+
+        if !self.preconditions.is_empty() {
+            let arg_mapping = self
+                .args
+                .iter()
+                .map(|arg| arg.name.clone())
+                .zip(args.iter().cloned())
+                .collect::<HashMap<_, _>>();
+            for cond in &self.preconditions {
+                preconditions.push(cond.subst(&arg_mapping)?);
+            }
+        }
+
+        if compatible {
+            return Ok(preconditions);
+        }
+        Err(TypeError {
+            message: format!(
+                "lookup_preconditions: No matching function overload found for {} given argument types {}",
+                self.name,
+                args.iter()
+                    .map(|t| t.typ().to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+        })
+    }
+}
+
+impl Stmt {
+    pub fn subst(&self, mapping: &HashMap<String, Expr>) -> Result<(Stmt, Option<String>), TypeError> {
+        match self {
+            Stmt::Expr(expr) => {
+                let new_expr = expr.subst(mapping)?;
+                Ok((Stmt::Expr(new_expr), None))
+            }
+            Stmt::Let {
+                name,
+                typ,
+                mutable,
+                value,
+            } => {
+                let new_value = value.subst(mapping)?;
+                Ok((Stmt::Let {
+                    name: name.clone(),
+                    typ: typ.clone(),
+                    mutable: *mutable,
+                    value: new_value,
+                }, Some(name.clone())))
+            }
+            Stmt::Assign { name, value, op } => {
+                let new_value = value.subst(mapping)?;
+                Ok((Stmt::Assign {
+                    name: name.clone(),
+                    op: *op,
+                    value: new_value,
+                }, None))
+            }
+        }
+    }
+}
+
+impl Expr {
+    pub fn subst(&self, mapping: &HashMap<String, Expr>) -> Result<Expr, TypeError> {
+        match self {
+            Expr::Literal(literal) => Ok(Expr::Literal(literal.clone())),
+            Expr::Variable { name, .. } => {
+                if let Some(replacement) = mapping.get(name) {
+                    Ok(replacement.clone())
+                } else {
+                    Err(TypeError {
+                        message: format!("No substitution found for variable {}", name),
+                    })
+                }
+            }
+            Expr::FunctionCall {
+                name,
+                args,
+                return_type,
+                type_instantiations,
+            } => {
+                let new_args = args
+                    .iter()
+                    .map(|arg| arg.subst(mapping))
+                    .collect::<Result<Vec<Expr>, TypeError>>()?;
+                Ok(Expr::FunctionCall {
+                    name: name.clone(),
+                    args: new_args,
+                    return_type: return_type.clone(),
+                    type_instantiations: type_instantiations.clone(),
+                })
+            }
+            Expr::Semicolon(stmt, expr) => {
+                let (new_stmt, new_var) = stmt.subst(mapping)?;
+                if let Some(var_name) = new_var {
+                    let mut new_mapping = mapping.clone();
+                    new_mapping.insert(var_name.clone(), Expr::Variable { name: var_name.clone(), typ: None });
+                    let new_expr = expr.subst(&new_mapping)?;
+                    return Ok(Expr::Semicolon(Box::new(new_stmt), Box::new(new_expr)));
+                } else {
+                    let new_expr = expr.subst(mapping)?;
+                    Ok(Expr::Semicolon(Box::new(new_stmt), Box::new(new_expr)))
+                }
+            }
+            Expr::SquareSequence {
+                elems,
+                elem_type,
+            } => {
+                let new_elements = elems
+                    .iter()
+                    .map(|elem| elem.subst(mapping))
+                    .collect::<Result<Vec<Expr>, TypeError>>()?;
+                Ok(Expr::SquareSequence {
+                    elems: new_elements,
+                    elem_type: elem_type.clone(),
+                })
+            }
+            Expr::RoundSequence { elems } => {
+                let new_elements = elems
+                    .iter()
+                    .map(|elem| elem.subst(mapping))
+                    .collect::<Result<Vec<Expr>, TypeError>>()?;
+                Ok(Expr::RoundSequence { elems: new_elements })
+            }
+            Expr::Lambda { args, body } => {
+                let mut inner_mapping = mapping.clone();
+                for arg in args {
+                    inner_mapping.insert(arg.name.clone(), arg.arg_type.var(&arg.name));
+                }
+                let new_body = body.subst(&inner_mapping)?;
+                Ok(Expr::Lambda {
+                    args: args.clone(),
+                    body: Box::new(new_body),
+                })
+            }
+            Expr::SeqAt { seq, index } => {
+                let new_seq = seq.subst(mapping)?;
+                let new_index = index.subst(mapping)?;
+                Ok(Expr::SeqAt {
+                    seq: Box::new(new_seq),
+                    index: Box::new(new_index),
+                })
+            }
+            // Expr::Cast { expr, to_type } => {
+            //     let new_expr = expr.subst(mapping)?;
+            //     Ok(Expr::Cast {
+            //         expr: Box::new(new_expr),
+            //         to_type: to_type.clone(),
+            //     })
+            // }
+        }
+    }
+}

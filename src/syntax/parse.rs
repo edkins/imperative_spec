@@ -438,6 +438,7 @@ fn call_suffix(name: String) -> impl Fn(&str) -> IResult<&str, Expr> {
                 name: name.clone(),
                 args,
                 type_instantiations: vec![],
+                return_type: None,
             },
         ))
     }
@@ -473,6 +474,16 @@ fn expr_tight(input: &str) -> IResult<&str, Expr> {
     .parse(input)
 }
 
+fn expr_suffixed(input: &str) -> IResult<&str, Expr> {
+    let (input, base) = expr_tight(input)?;
+    let (input, index) = opt(delimited(symbol(Symbol::OpenSquare), expr_comma, symbol(Symbol::CloseSquare))).parse(input)?;
+    if let Some(index) = index {
+        Ok((input, Expr::SeqAt { seq: Box::new(base), index: Box::new(index) }))
+    } else {
+        Ok((input, base))
+    }
+}
+
 fn expr_prefixed(input: &str) -> IResult<&str, Expr> {
     alt((
         preceded(
@@ -481,6 +492,7 @@ fn expr_prefixed(input: &str) -> IResult<&str, Expr> {
                 name: "neg".to_owned(),
                 args: vec![e],
                 type_instantiations: vec![],
+                return_type: None,
             }),
         ),
         expr_tight,
@@ -526,6 +538,7 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
                     name: "*".to_owned(),
                     args: vec![exprs.clone(), rhs],
                     type_instantiations: vec![],
+                    return_type: None,
                 };
                 exprs = new_expr;
             }
@@ -534,6 +547,7 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
                     name: "/".to_owned(),
                     args: vec![exprs.clone(), rhs],
                     type_instantiations: vec![],
+                    return_type: None,
                 };
                 exprs = new_expr;
             }
@@ -542,6 +556,7 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
                     name: "%".to_owned(),
                     args: vec![exprs.clone(), rhs],
                     type_instantiations: vec![],
+                    return_type: None,
                 };
                 exprs = new_expr;
             }
@@ -565,6 +580,7 @@ fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
                     name: "+".to_owned(),
                     args: vec![exprs.clone(), rhs],
                     type_instantiations: vec![],
+                    return_type: None,
                 };
                 exprs = new_expr;
             }
@@ -573,6 +589,7 @@ fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
                     name: "-".to_owned(),
                     args: vec![exprs.clone(), rhs],
                     type_instantiations: vec![],
+                    return_type: None,
                 };
                 exprs = new_expr;
             }
@@ -604,6 +621,7 @@ fn expr_cmp(input: &str) -> IResult<&str, Expr> {
                 name: cmpop_to_function_name(sym).to_owned(),
                 args: vec![expr, rhs],
                 type_instantiations: vec![],
+                return_type: None,
             };
             Ok((input, new_expr))
         }
@@ -621,6 +639,7 @@ fn expr_conjunction(input: &str) -> IResult<&str, Expr> {
                 name: "&&".to_owned(),
                 args: vec![expr, rhs],
                 type_instantiations: vec![],
+                return_type: None,
             };
             Ok((input, new_expr))
         }
@@ -638,6 +657,7 @@ fn expr_disjunction(input: &str) -> IResult<&str, Expr> {
                 name: "||".to_owned(),
                 args: vec![expr, rhs],
                 type_instantiations: vec![],
+                return_type: None,
             };
             Ok((input, new_expr))
         }
@@ -813,19 +833,30 @@ fn expr_or_empty(input: &str) -> IResult<&str, Expr> {
     }
 }
 
-fn attribute(input: &str) -> IResult<&str, Expr> {
+fn attribute_check_decisions(input: &str) -> IResult<&str, FuncAttribute> {
+    let (input, decisions) = separated_list1(
+        symbol(Symbol::Comma),
+        identifier,
+    ).parse(input)?;
+    Ok((
+        input,
+        FuncAttribute::CheckDecisions(decisions)
+    ))
+}
+
+fn attribute(input: &str) -> IResult<&str, FuncAttribute> {
     let (input, _) = symbol(Symbol::Hash)(input)?;
-    let (input, expr) = delimited(
+    let (input, attr) = delimited(
         symbol(Symbol::OpenSquare),
-        expr_comma,
+        alt((attribute_check_decisions,)),
         symbol(Symbol::CloseSquare),
     )
     .parse(input)?;
-    Ok((input, expr))
+    Ok((input, attr))
 }
 
 fn funcdef(input: &str) -> IResult<&str, FuncDef> {
-    let (input, attributes) = many0(attribute).parse(input)?;
+    let (input, mut attributes) = many0(attribute).parse(input)?;
     let (input, _) = keyword(Word::Fn)(input)?;
     let (input, name) = identifier(input)?;
     let (input, args) = delimited(
@@ -869,6 +900,12 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
         ),
     };
 
+    if let Some(sees) = sees {
+        for see in sees.into_iter() {
+            attributes.push(FuncAttribute::Sees(see));
+        }
+    }
+
     Ok((
         input,
         FuncDef {
@@ -876,9 +913,8 @@ fn funcdef(input: &str) -> IResult<&str, FuncDef> {
             name,
             type_params: vec![],
             args,
-            return_name,
+            return_name: return_name.unwrap_or_else(||"__ret__".to_owned()),
             return_type,
-            sees: sees.unwrap_or_else(Vec::new),
             preconditions: preconditions.unwrap_or_else(Vec::new),
             postconditions: postconditions.unwrap_or_else(Vec::new),
             body,

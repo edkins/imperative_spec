@@ -17,17 +17,23 @@ pub struct Arg {
     pub arg_type: Type,
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub enum FuncAttribute {
+    CheckDecisions(Vec<String>),
+    Sees(String),
+    SideEffect(String),
+}
+
 #[derive(Clone)]
 pub struct FuncDef {
-    pub attributes: Vec<Expr>,
+    pub attributes: Vec<FuncAttribute>,
     pub name: String,
     pub type_params: Vec<String>,
     pub args: Vec<Arg>,
-    pub return_name: Option<String>,
+    pub return_name: String,
     pub return_type: Type,
     pub preconditions: Vec<Expr>,
     pub postconditions: Vec<Expr>,
-    pub sees: Vec<String>,
     pub body: Expr,
 }
 
@@ -45,9 +51,14 @@ pub enum Expr {
     Literal(Literal),
     Variable { name: String, typ: Option<Type> },
     Semicolon(Box<Stmt>, Box<Expr>),
-    FunctionCall { name: String, args: Vec<Expr>, type_instantiations: Vec<Type> },
+    FunctionCall { name: String, args: Vec<Expr>, type_instantiations: Vec<Type>, return_type: Option<Type> },
     SquareSequence { elems: Vec<Expr>, elem_type: Option<Type> },
     RoundSequence { elems: Vec<Expr> },
+    Lambda {
+        args: Vec<Arg>,
+        body: Box<Expr>,
+    },
+    SeqAt { seq: Box<Expr>, index: Box<Expr> },
 }
 
 #[derive(Clone, Copy)]

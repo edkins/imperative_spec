@@ -5,26 +5,6 @@ use crate::check::ops::Ops;
 use crate::check::ztype_ast::{TExpr, TFuncAttribute, TFuncDef, TSourceFile, TStmt};
 use crate::syntax::ast::{Arg, AssignOp, Expr, FuncDef, SourceFile, Stmt, Type, TypeArg};
 
-#[derive(Debug)]
-pub struct TypeError {
-    pub message: String,
-}
-
-impl std::fmt::Display for TypeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TypeError: {}", self.message)
-    }
-}
-impl std::error::Error for TypeError {}
-
-impl TypeError {
-    pub fn with_context(self, context: &str) -> TypeError {
-        TypeError {
-            message: format!("{} {}", context, self.message),
-        }
-    }
-}
-
 #[derive(Clone)]
 struct TEnv {
     variables: HashMap<String, Type>,
@@ -32,18 +12,6 @@ struct TEnv {
 }
 
 impl Type {
-    pub fn lambda(arg_types: &[Type], ret_type: &Type) -> Type {
-        Type {
-            name: "Lambda".to_owned(),
-            type_args: arg_types
-                .iter()
-                .cloned()
-                .map(TypeArg::Type)
-                .chain(std::iter::once(TypeArg::Type(ret_type.clone())))
-                .collect(),
-        }
-    }
-
     // pub fn call_lambda(&self, arg_types: &[Type]) -> Result<Type, TypeError> {
     //     if self.name != "Lambda" {
     //         return Err(TypeError {

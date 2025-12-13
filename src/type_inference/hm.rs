@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{check::{builtins::all_builtins, ztype_ast::TFuncDef, ztype_inference::TypeError}, syntax::ast::{AssignOp, Expr, FuncDef, SourceFile, Stmt, Type, TypeArg}};
+use crate::{check::{builtins::all_builtins, types::TypeError}, syntax::ast::{AssignOp, Expr, FuncDef, Literal, SourceFile, Stmt, Type, TypeArg}};
 
 #[derive(Clone)]
 struct DeclaredFuncType {
@@ -9,13 +9,17 @@ struct DeclaredFuncType {
     type_params: Vec<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct TypeVars {
     debug_func_name: String,
     counter: usize,
     expansions: HashMap<String, Type>,
-    vars: HashMap<String, Type>,
     functions: HashMap<String, DeclaredFuncType>,
+}
+
+#[derive(Clone, Default)]
+struct HMEnv {
+    vars: HashMap<String, Type>,
 }
 
 #[derive(Clone, Default)]
@@ -77,6 +81,20 @@ impl Type {
             }
         }
         false
+    }
+}
+
+impl Expr {
+    pub fn as_literal_u64(&self) -> Result<u64, TypeError> {
+        if let Expr::Literal(lit) = self {
+            match lit {
+                Literal::U64(u) => Ok(*u),
+                Literal::I64(i) if *i >= 0 => Ok(*i as u64),
+                _ => Err(TypeError{message: format!("Expected u64 literal, got {}", lit)}),
+            }
+        } else {
+            Err(TypeError{message: format!("Expected literal expression, got {}", self)})
+        }
     }
 }
 
@@ -145,12 +163,12 @@ impl TypeVars {
         })
     }
 
-    fn infer_expr(&mut self, expr: &mut Expr, expected: Option<&Type>) -> Result<Type, TypeError> {
+    fn infer_expr(&mut self, expr: &mut Expr, env: &HMEnv, expected: Option<&Type>) -> Result<Type, TypeError> {
         let actual_type = match expr {
             Expr::Literal(literal) => {literal.typ()}
             Expr::Variable { name, typ } => {
                 assert!(typ.is_none());
-                if let Some(t) = self.vars.get(name) {
+                if let Some(t) = env.vars.get(name) {
                     *typ = Some(t.clone());
                     t.clone()
                 } else {
@@ -158,10 +176,11 @@ impl TypeVars {
                 }
             }
             Expr::Semicolon(stmt, expr) => {
-                self.infer_stmt(stmt)?;
-                self.infer_expr(expr, expected)?
+                let new_env = self.infer_stmt(stmt, env)?;
+                self.infer_expr(expr, &new_env, expected)?
             }
-            Expr::FunctionCall { name, args, type_instantiations } => {
+            Expr::FunctionCall { name, args, type_instantiations, return_type } => {
+                assert!(return_type.is_none());
                 assert!(type_instantiations.is_empty());
                 if let Some(func_type) = self.functions.get(name).cloned() {
                     if func_type.arg_types.len() != args.len() {
@@ -169,8 +188,9 @@ impl TypeVars {
                     }
                     let gen_result = self.generalize_function(&func_type)?;
                     for (arg, expected_type) in args.iter_mut().zip(gen_result.arg_types.iter()) {
-                        self.infer_expr(arg, Some(expected_type))?;
+                        self.infer_expr(arg, env, Some(expected_type))?;
                     }
+                    return_type.replace(gen_result.ret_type.clone());
                     gen_result.ret_type
                 } else {
                     return Err(TypeError{message: format!("Unknown function: {}", name)});
@@ -179,7 +199,7 @@ impl TypeVars {
             Expr::RoundSequence { elems } => {
                 let mut type_args = vec![];
                 for elem in elems.iter_mut() {
-                    type_args.push(TypeArg::Type(self.infer_expr(elem, None)?));
+                    type_args.push(TypeArg::Type(self.infer_expr(elem, env, None)?));
                 }
                 Type {
                     name: "Tuple".to_owned(),
@@ -191,11 +211,46 @@ impl TypeVars {
                 let tvar = self.fresh_type_var();
                 elem_type.replace(Type::basic(&tvar));
                 for elem in elems.iter_mut() {
-                    self.infer_expr(elem, Some(&Type::basic(&tvar)))?;
+                    self.infer_expr(elem, env, Some(&Type::basic(&tvar)))?;
                 }
                 Type {
                     name: "Vec".to_owned(),
                     type_args: vec![TypeArg::Type(Type::basic(&tvar))],
+                }
+            }
+            Expr::Lambda { args, body } => {
+                let mut new_env = env.clone();
+                let mut arg_skels = vec![];
+                for arg in args.iter() {
+                    let arg_skel = arg.arg_type.skeleton(&[])?;  // currently lambdas must declare all their types
+                    new_env.vars.insert(arg.name.clone(), arg_skel.clone());
+                    arg_skels.push(arg_skel);
+                }
+                let body_type = self.infer_expr(body, &new_env, None)?;
+                Type {
+                    name: "Lambda".to_owned(),
+                    type_args: arg_skels
+                        .into_iter()
+                        .map(|t| TypeArg::Type(t))
+                        .chain(std::iter::once(TypeArg::Type(body_type)))
+                        .collect(),
+                }
+            }
+            Expr::SeqAt { seq, index } => {
+                let seq_type = self.infer_expr(seq, env, None)?;
+                if seq_type.is_square_seq() {
+                    let elem_type = seq_type.get_uniform_square_elem_type().unwrap().clone();
+                    self.infer_expr(index, env, Some(&Type::basic("u64")))?;
+                    elem_type
+                } else if seq_type.is_round_seq() {
+                    let index = index.as_literal_u64()?;
+                    if index >= seq_type.get_round_seq_length().unwrap() {
+                        return Err(TypeError{message: format!("Index {} out of bounds for sequence of length {}", index, seq_type.get_round_seq_length().unwrap())});
+                    }
+                    let elem_type = seq_type.get_round_elem_type(index).unwrap();
+                    elem_type.clone()
+                } else {
+                    return Err(TypeError{message: format!("Type {} is not a sequence type", seq_type)});
                 }
             }
         };
@@ -206,17 +261,18 @@ impl TypeVars {
         Ok(actual_type)
     }
 
-    fn infer_stmt(&mut self, stmt: &mut Stmt) -> Result<(), TypeError> {
+    fn infer_stmt(&mut self, stmt: &mut Stmt, env: &HMEnv) -> Result<HMEnv, TypeError> {
         match stmt {
             Stmt::Expr(expr) => {
-                self.infer_expr(expr, None)?;
-                Ok(())
+                self.infer_expr(expr, env, None)?;
+                Ok(env.clone())
             }
             Stmt::Let { name, typ, value, .. } => {
                 let styp = typ.as_ref().map(|t| t.skeleton(&[])).transpose()?;
-                let inferred = self.infer_expr(value, styp.as_ref())?;
-                self.vars.insert(name.clone(), inferred);
-                Ok(())
+                let inferred = self.infer_expr(value, env, styp.as_ref())?;
+                let mut new_env = env.clone();
+                new_env.vars.insert(name.clone(), inferred.clone());
+                Ok(new_env)
             }
             Stmt::Assign { name, op, value } => {
                 *stmt = Stmt::Expr(
@@ -227,9 +283,10 @@ impl TypeVars {
                             value.clone(),
                         ],
                         type_instantiations: vec![],
+                        return_type: None,
                     }
                 );
-                self.infer_stmt(stmt)
+                self.infer_stmt(stmt, env)
             }
         }
     }
@@ -252,7 +309,7 @@ impl Type {
     /// Vec<u32> -> Vec<int>
     /// (u32,u64,bool) -> (int,int,bool)
     /// etc.
-    fn skeleton(&self, type_params: &[String]) -> Result<Type, TypeError> {
+    pub fn skeleton(&self, type_params: &[String]) -> Result<Type, TypeError> {
         match (self.name.as_str(), self.type_args.len()) {
             ("u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "nat", 0) => Ok(Type::basic("int")),
             ("bool" | "int" | "str" | "void", 0) => Ok(self.clone()),
@@ -309,30 +366,8 @@ impl FuncDef {
     }
 }
 
-impl TFuncDef {
-    fn skeleton(&self) -> Result<DeclaredFuncType, TypeError> {
-        let skel_params = self
-            .args
-            .iter()
-            .map(|p| p.arg_type.skeleton(&self.type_params))
-            .collect::<Result<Vec<_>, _>>()?;
-        let skel_ret_type = self.return_type.skeleton(&self.type_params)?;
-        Ok(DeclaredFuncType {
-            arg_types: skel_params,
-            ret_type: skel_ret_type,
-            type_params: self.type_params.clone(),
-        })
-    }
-}
-
 pub fn hindley_milner_infer(source_file: &mut SourceFile, verbosity: u8) -> Result<(), TypeError> {
-    let mut type_vars = TypeVars {
-        debug_func_name: "".to_owned(),
-        counter: 0,
-        expansions: HashMap::new(),
-        vars: HashMap::new(),
-        functions: HashMap::new(),
-    };
+    let mut type_vars = TypeVars::default();
 
     // Register builtin functions
     for builtin in all_builtins().values() {
@@ -347,20 +382,32 @@ pub fn hindley_milner_infer(source_file: &mut SourceFile, verbosity: u8) -> Resu
     }
 
     // Now infer types for each function body
-    for func in &mut source_file.functions.clone() {
+    for func in &mut source_file.functions {
         let mut local_type_vars = type_vars.clone();
         local_type_vars.debug_func_name = func.name.clone();
         let funcdef = type_vars.functions.get(&func.name).unwrap().clone();
         assert!(funcdef.arg_types.len() == func.args.len());
+        let mut env = HMEnv::default();
         for (param, arg) in funcdef.arg_types.iter().zip(&func.args) {
-            local_type_vars.vars.insert(arg.name.clone(), param.clone());
+            env.vars.insert(arg.name.clone(), param.clone());
         }
-        local_type_vars.infer_expr(&mut func.body, Some(&funcdef.ret_type))?;
+        local_type_vars.infer_expr(&mut func.body, &env, Some(&funcdef.ret_type))?;
+
+        // Infer types for expressions in preconditions and postconditions
+        for pre in &mut func.preconditions {
+            local_type_vars.infer_expr(pre, &env, Some(&Type::basic("bool")))?;
+        }
+        env.vars.insert(func.return_name.clone(), funcdef.ret_type.clone());
+        for post in &mut func.postconditions {
+            local_type_vars.infer_expr(post, &env, Some(&Type::basic("bool")))?;
+        }
+
         if verbosity >= 2 {
             println!("Inferred types for function {}:", func.name);
-            for (var, typ) in &local_type_vars.vars {
+            for (var, typ) in &env.vars {
                 println!("  {} : {}", var, typ);
             }
+            println!("{}", func);
         }
     }
 
