@@ -112,21 +112,6 @@ struct Signature {
     ret_type: Type,
 }
 
-impl ExprKind {
-    fn set_type_instantiations(&mut self, type_instantiations: &[Type]) {
-        match self {
-            ExprKind::Function {
-                type_instantiations: ti,
-                ..
-            } => {
-                assert!(ti.is_empty());
-                *ti = type_instantiations.to_vec();
-            }
-            _ => {}
-        }
-    }
-}
-
 impl Expr {
     pub fn type_mut(&mut self) -> &mut Option<Type> {
         match self {
@@ -243,6 +228,7 @@ impl TypeVars {
             Expr::Expr {
                 kind,
                 args,
+                type_instantiations,
                 ..
             } => {
                 let arg_types = args
@@ -250,7 +236,8 @@ impl TypeVars {
                     .map(|arg| self.infer_expr(arg, env, None))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.sort_out_seq_at(kind, args, &arg_types)?;
-                let sig = self.signature(kind)?;  // also sets type instantiations for functions
+                let (sig, new_type_instantiations) = self.signature(kind)?;  // also sets type instantiations for functions
+                *type_instantiations = new_type_instantiations;
                 if sig.arg_types.len() != arg_types.len() {
                     return Err(TypeError {
                         message: format!(
@@ -323,7 +310,7 @@ impl TypeVars {
             } else if seq_type.is_square_seq() {
                 *kind = ExprKind::Function {
                     name: "seq_at".to_owned(),
-                    type_instantiations: vec![seq_type.get_uniform_square_elem_type().unwrap().clone()],
+                    // type_instantiations: vec![seq_type.get_uniform_square_elem_type().unwrap().clone()],
                     mutable_args: vec![false,false]
                 };
             } else {
@@ -335,17 +322,15 @@ impl TypeVars {
         Ok(())
     }
 
-    fn signature(&mut self, kind: &mut ExprKind) -> Result<Signature, TypeError> {
+    fn signature(&mut self, kind: &mut ExprKind) -> Result<(Signature, Vec<Type>), TypeError> {
         match kind {
             ExprKind::Function {
                 name,
-                type_instantiations,
                 ..
             } => {
                 if let Some(func_def) = self.functions.get(name).cloned() {
                     let (sig, instantiations) = self.generalize_function(&func_def)?;
-                    *type_instantiations = instantiations;
-                    Ok(sig)
+                    Ok((sig, instantiations))
                 } else {
                     Err(TypeError {
                         message: format!("Unknown function: {}", name),
@@ -353,32 +338,32 @@ impl TypeVars {
                 }
             },
             ExprKind::Literal { literal } => {
-                Ok(Signature {
+                Ok((Signature {
                     arg_types: vec![],
                     ret_type: literal.typ(),
-                })
+                }, vec![]))
             },
             ExprKind::SquareSequence { len } => {
                 let tvar = self.fresh_type_var_wrapped();
-                Ok(Signature {
+                Ok((Signature {
                     arg_types: vec![tvar.clone(); *len],
                     ret_type: tvar.vec(),
-                })
+                }, vec![tvar]))
             }
             ExprKind::RoundSequence { len } => {
                 let tvars = self.fresh_type_vars_wrapped(*len);
-                Ok(Signature {
+                Ok((Signature {
                     arg_types: tvars.clone(),
                     ret_type: Type::tuple(&tvars),
-                })
+                }, tvars))
             }
             ExprKind::TupleAt { len, index } => {
                 assert!(index < len);
                 let tvars = self.fresh_type_vars_wrapped(*len);
-                Ok(Signature {
+                Ok((Signature {
                     arg_types: vec![Type::tuple(&tvars)],
                     ret_type: tvars[*index].clone(),
-                })
+                }, tvars))
             }
             ExprKind::UnknownSequenceAt => unreachable!(),
         }
@@ -417,11 +402,9 @@ impl TypeVars {
         let new_type = self.expand_type(&expr.typ(), allow_unbound)?;
         *expr.type_mut() = Some(new_type);
         match expr {
-            Expr::Expr { kind, args, .. } => {
-                if let ExprKind::Function { type_instantiations, .. } = kind {
-                    for t in type_instantiations.iter_mut() {
-                        *t = self.expand_type(t, allow_unbound)?;
-                    }
+            Expr::Expr { args, type_instantiations, .. } => {
+                for t in type_instantiations.iter_mut() {
+                    *t = self.expand_type(t, allow_unbound)?;
                 }
                 for arg in args.iter_mut() {
                     self.expand_expr(arg, allow_unbound)?;

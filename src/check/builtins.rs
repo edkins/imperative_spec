@@ -60,6 +60,7 @@ fn dummy_body() -> Expr {
             literal: Literal::Unit,
         },
         args: vec![],
+        type_instantiations: vec![],
         info: ExprInfo::default(),
     }
 }

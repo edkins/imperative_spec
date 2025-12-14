@@ -83,6 +83,7 @@ impl Literal {
         Expr::Expr {
             kind: ExprKind::Literal { literal: self.clone() },
             args: vec![],
+            type_instantiations: vec![],
             info: ExprInfo {
                 typ: Some(self.typ()),
                 ..Default::default()
@@ -391,15 +392,15 @@ impl Type {
         }
     }
 
-    pub fn get_uniform_square_elem_type(&self) -> Option<&Type> {
+    pub fn get_uniform_square_elem_type(&self) -> Option<Type> {
         if self.name == "Array" && self.type_args.len() == 2 {
             match &self.type_args[0] {
-                TypeArg::Type(t) => Some(t),
+                TypeArg::Type(t) => Some(t.clone()),
                 _ => None,
             }
         } else if self.name == "Vec" && self.type_args.len() == 1 {
             match &self.type_args[0] {
-                TypeArg::Type(t) => Some(t),
+                TypeArg::Type(t) => Some(t.clone()),
                 _ => None,
             }
         } else {
@@ -411,10 +412,10 @@ impl Type {
     //     self.get_uniform_square_elem_type()
     // }
 
-    pub fn get_round_elem_type(&self, i: u64) -> Option<&Type> {
+    pub fn get_round_elem_type(&self, i: u64) -> Option<Type> {
         if self.name == "Tuple" {
             match self.type_args.get(i as usize) {
-                Some(TypeArg::Type(t)) => Some(t),
+                Some(TypeArg::Type(t)) => Some(t.clone()),
                 _ => None,
             }
         } else {
@@ -422,7 +423,7 @@ impl Type {
         }
     }
 
-    pub fn get_either_elem_type(&self, i: u64) -> Option<&Type> {
+    pub fn get_either_elem_type(&self, i: u64) -> Option<Type> {
         if self.is_square_seq() {
             self.get_uniform_square_elem_type()
         } else {
@@ -430,12 +431,12 @@ impl Type {
         }
     }
 
-    pub fn get_round_elem_type_vector(&self) -> Option<Vec<&Type>> {
+    pub fn get_round_elem_type_vector(&self) -> Option<Vec<Type>> {
         if self.name == "Tuple" {
             let mut result = vec![];
             for ta in &self.type_args {
                 match ta {
-                    TypeArg::Type(t) => result.push(t),
+                    TypeArg::Type(t) => result.push(t.clone()),
                     _ => return None,
                 }
             }

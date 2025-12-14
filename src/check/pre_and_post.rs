@@ -272,28 +272,6 @@ impl Type {
     }
 }
 
-impl ExprKind {
-    fn type_subst_in_place(
-        &mut self,
-        type_params: &[String],
-        type_instantiations: &[Type],
-    ) -> Result<(), TypeError> {
-        match self {
-            ExprKind::Function {
-                name: _,
-                type_instantiations: call_type_instantiations,
-                mutable_args: _,
-            } => {
-                for t in call_type_instantiations.iter_mut() {
-                    t.type_subst_in_place(type_params, type_instantiations)?;
-                }
-                Ok(())
-            }
-            _ => Ok(()), // Other cases can be implemented similarly
-        }
-    }
-}
-
 impl Expr {
     pub fn type_subst(
         &self,
@@ -318,8 +296,10 @@ impl Expr {
             Expr::Variable { .. } => {
                 Ok(())
             }
-            Expr::Expr { kind, args, .. } => {
-                kind.type_subst_in_place(type_params, type_instantiations)?;
+            Expr::Expr { args, type_instantiations: call_type_instantiations, .. } => {
+                for t in call_type_instantiations.iter_mut() {
+                    t.type_subst_in_place(type_params, type_instantiations)?;
+                }
                 for arg in args.iter_mut() {
                     arg.type_subst_in_place(type_params, type_instantiations)?;
                 }
@@ -358,6 +338,7 @@ impl Expr {
                 kind,
                 args,
                 info,
+                type_instantiations,
             } => {
                 let new_args = args
                     .iter()
@@ -367,6 +348,7 @@ impl Expr {
                     kind: kind.clone(),
                     args: new_args,
                     info: info.clone(),
+                    type_instantiations: type_instantiations.clone(),
                 })
             }
             Expr::Lambda { args, body, info } => {
@@ -421,7 +403,7 @@ impl FuncDef {
 }
 
 impl ExprKind {
-    pub fn pre_and_post(&self, do_preconditions: bool, args:&[Expr], result: &Expr, funcs: &[FuncDef], outer_type_params: &[String]) -> Result<PreAndPost, TypeError> {
+    pub fn pre_and_post(&self, type_instantiations: &[Type], do_preconditions: bool, args:&[Expr], result: &Expr, funcs: &[FuncDef], outer_type_params: &[String]) -> Result<PreAndPost, TypeError> {
         if !do_preconditions {
             return Ok(PreAndPost {
                 preconditions: vec![],
@@ -431,7 +413,6 @@ impl ExprKind {
         match self {
             ExprKind::Function {
                 name,
-                type_instantiations,
                 ..
             } => {
                 let func = FuncDef::find_by_name(funcs, name)?;

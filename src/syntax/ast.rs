@@ -49,7 +49,7 @@ pub enum Literal {
 #[derive(Clone, Debug)]
 pub enum ExprKind {
     Literal{literal: Literal},
-    Function{name: String, type_instantiations: Vec<Type>, mutable_args: Vec<bool>},
+    Function{name: String, mutable_args: Vec<bool>},
     SquareSequence{len: usize},
     RoundSequence{len: usize},
     UnknownSequenceAt,
@@ -81,6 +81,7 @@ pub enum Expr {
     Expr {
         kind: ExprKind,
         args: Vec<Expr>,
+        type_instantiations: Vec<Type>,
         info: ExprInfo,
     },
     Variable {

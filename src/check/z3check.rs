@@ -881,26 +881,28 @@ impl Env {
 // }
 
 impl ExprKind {
-    fn z3_call(&self, args: &[Dynamic], env: &mut Env, arg_types: &[Type], return_type: &Type) -> Result<Dynamic, CheckError> {
+    fn z3_call(&self, args: &[Dynamic], env: &mut Env, type_instantiations: &[Type]) -> Result<Dynamic, CheckError> {
         // println!("Calling {:?} with args {:?}, arg types {:?}", self, args, arg_types);
         match self {
-            ExprKind::Function { name, type_instantiations, .. } => {
+            ExprKind::Function { name, .. } => {
                 z3_function_call(name, args, env, type_instantiations)
             }
             ExprKind::Literal { literal } => literal.z3_check(),
             ExprKind::RoundSequence { len } => {
                 assert!(args.len() == *len);
-                mk_z3_round_sequence(args, return_type, &env.type_param_list)
+                assert!(type_instantiations.len() == *len);
+                mk_z3_round_sequence(args, &Type::tuple(type_instantiations), &env.type_param_list)
             }
             ExprKind::SquareSequence { len } => {
                 assert!(args.len() == *len);
-                let elem_type = return_type.uniform_square_elem_type().unwrap();
-                mk_z3_square_sequence(args, &elem_type, &env.type_param_list)
+                assert!(type_instantiations.len() == 1);
+                mk_z3_square_sequence(args, &type_instantiations[0], &env.type_param_list)
             }
-            ExprKind::TupleAt { index, .. } => {
+            ExprKind::TupleAt { index, len } => {
                 assert!(args.len() == 1);
+                assert!(type_instantiations.len() == *len);
                 let tuple = &args[0];
-                let dt = arg_types[0].to_z3_datatype(&env.type_param_list)?;
+                let dt = Type::tuple(type_instantiations).to_z3_datatype(&env.type_param_list)?;
                 let accessor = &dt.variants[0]
                     .accessors
                     .get(*index)
@@ -908,7 +910,7 @@ impl ExprKind {
                         message: format!(
                             "Index {} out of bounds for tuple type {}",
                             index,
-                            arg_types[0]
+                            Type::tuple(type_instantiations)
                         ),
                     })?;
                 let at_value = accessor.apply(&[tuple as &dyn z3::ast::Ast]);
@@ -975,6 +977,7 @@ impl Expr {
             Expr::Expr {
                 kind,
                 args,
+                type_instantiations,
                 info,
             } => {
                 let do_preconditions = !info.preconditions_checked;
@@ -987,7 +990,7 @@ impl Expr {
                 let mut self_clone = self.with_preconditions_checked_recursive();
                 self_clone.set_preconditions_checked_recursive();
                 let args_clone = args.iter().map(|a| a.with_preconditions_checked_recursive()).collect::<Vec<Expr>>();
-                let pre_and_post = kind.pre_and_post(do_preconditions, &args_clone, &self_clone, &env.other_funcs, &env.type_param_list)?;
+                let pre_and_post = kind.pre_and_post(type_instantiations, do_preconditions, &args_clone, &self_clone, &env.other_funcs, &env.type_param_list)?;
                 if env.verbosity >= 2 && !pre_and_post.preconditions.is_empty() {
                     println!(
                         "Begin precondition check for function call {:?}, preconditions {:?}",
@@ -998,9 +1001,8 @@ impl Expr {
                 if env.verbosity >= 2 && !pre_and_post.preconditions.is_empty() {
                     println!("End precondition check for function call {:?}", kind);
                 }
-                let arg_types = args.iter().map(|a| a.typ()).collect::<Vec<Type>>();
                 let return_type = self.typ();
-                let mut ast = kind.z3_call(&z3_args, env, &arg_types, &return_type)?;
+                let mut ast = kind.z3_call(&z3_args, env, &type_instantiations)?;
 
                 let mutability = kind.mutability();
                 let mutable_count = mutability.iter().filter(|b|**b).count();

@@ -25,7 +25,6 @@ impl FuncDef {
         Ok(Expr::Expr {
             kind: ExprKind::Function {
                 name: self.name.to_owned(),
-                type_instantiations: type_instantiations.to_owned(),
                 mutable_args: self
                     .args
                     .iter()
@@ -33,6 +32,7 @@ impl FuncDef {
                     .collect(),
             },
             args: args.to_owned(),
+            type_instantiations: type_instantiations.to_owned(),
             info: ExprInfo {
                 typ: Some(self.return_type
                     .instantiate(&self.type_params, type_instantiations)?),
@@ -79,6 +79,7 @@ impl Expr {
                 Ok(Expr::Expr {
                     kind: ExprKind::TupleAt {len: self.typ().get_round_seq_length().unwrap() as usize, index},
                     args: vec![self.clone()],
+                    type_instantiations: self.typ().get_round_elem_type_vector().unwrap(),
                     info: ExprInfo {
                         typ: Some(self.typ().get_round_elem_type(index as u64).unwrap().clone()),
                         pos: None,

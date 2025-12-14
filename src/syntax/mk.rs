@@ -5,6 +5,7 @@ impl Literal {
         Expr::Expr {
             kind: ExprKind::Literal { literal: self },
             args: vec![],
+            type_instantiations: vec![],
             info: ExprInfo::default(),
         }
     }
@@ -27,10 +28,10 @@ pub fn function_call(func_name: &str, args: Vec<Expr>, mutable_args: Vec<bool>) 
     Expr::Expr {
         kind: ExprKind::Function {
             name: func_name.to_owned(),
-            type_instantiations: vec![],
             mutable_args,
         },
         args,
+        type_instantiations: vec![],
         info: ExprInfo::default(),
     }
 }
@@ -39,6 +40,7 @@ pub fn tuple(elems: Vec<Expr>) -> Expr {
     Expr::Expr {
         kind: ExprKind::RoundSequence { len: elems.len() },
         args: elems,
+        type_instantiations: vec![],
         info: ExprInfo::default(),
     }
 }
@@ -47,6 +49,7 @@ pub fn vector(elems: Vec<Expr>) -> Expr {
     Expr::Expr {
         kind: ExprKind::SquareSequence { len: elems.len() },
         args: elems,
+        type_instantiations: vec![],
         info: ExprInfo::default(),
     }
 }
@@ -129,6 +132,7 @@ impl Expr {
         Expr::Expr {
             kind: ExprKind::UnknownSequenceAt,
             args: vec![self, index],
+            type_instantiations: vec![],
             info: ExprInfo::default(),
         }
     }

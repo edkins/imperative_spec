@@ -173,9 +173,9 @@ impl Expr {
         strength: BindingStrength,
     ) -> std::fmt::Result {
         match self {
-            Expr::Expr { kind, args, .. } => match kind {
+            Expr::Expr { kind, args, type_instantiations, .. } => match kind {
                 ExprKind::Literal { literal } => write!(f, "{}", literal),
-                ExprKind::Function { name, type_instantiations, .. } => {
+                ExprKind::Function { name, .. } => {
                     if name == ";" && args.len() == 2 {
                         strength.open_brace(f, BindingStrength::Semicolon)?;
                         args[0].fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
