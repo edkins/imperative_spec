@@ -8,7 +8,7 @@ use nom::{
     sequence::{delimited, pair, preceded, terminated},
 };
 
-use crate::syntax::ast::*;
+use crate::syntax::{ast::*, mk};
 
 enum Word {
     Identifier(String),
@@ -32,6 +32,7 @@ enum Symbol {
     CloseBrace,
     OpenSquare,
     CloseSquare,
+    Dot,
 
     Colon,
     Assign,
@@ -207,7 +208,7 @@ fn single_char_sym(input: &str) -> IResult<&str, Symbol> {
 fn is_multi_char_sym(ch: char) -> bool {
     matches!(
         ch,
-        ':' | '=' | '+' | '-' | '*' | '<' | '>' | '!' | '&' | '|' | '#' | '%' | '/'
+        ':' | '=' | '+' | '-' | '*' | '<' | '>' | '!' | '&' | '|' | '#' | '%' | '/' | '.'
     )
 }
 
@@ -235,6 +236,7 @@ fn multi_char_sym(input: &str) -> IResult<&str, Symbol> {
         "#" => Ok((input, Symbol::Hash)),
         "%" => Ok((input, Symbol::Percent)),
         "/" => Ok((input, Symbol::Slash)),
+        "." => Ok((input, Symbol::Dot)),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Char,
@@ -269,7 +271,9 @@ fn boolean(input: &str) -> IResult<&str, Literal> {
 }
 
 fn literal(input: &str) -> IResult<&str, Expr> {
-    map(alt((integer, string, boolean)), Expr::Literal).parse(input)
+    let (input, _) = whitespace0(input)?;
+    let (input1, lit) = alt((integer, string, boolean)).parse(input)?;
+    Ok((input1, lit.as_expr().between(input, input1)))
 }
 
 // fn variable(input: &str) -> IResult<&str, Expr> {
@@ -305,11 +309,12 @@ fn specific_identifier(expected: &str) -> impl Fn(&str) -> IResult<&str, String>
 }
 
 fn variable_or_call(input: &str) -> IResult<&str, Expr> {
-    let (input, name) = identifier(input)?;
-    let (input, call_opt) = opt(call_suffix(name.clone())).parse(input)?;
+    let (input0, _) = whitespace0(input)?;
+    let (input1, name) = identifier(input0)?;
+    let (input2, call_opt) = opt(call_suffix(name.clone())).parse(input1)?;
     match call_opt {
-        Some(call_expr) => Ok((input, call_expr)),
-        None => Ok((input, Expr::Variable { name, typ: None })),
+        Some(call_expr) => Ok((input2, call_expr.between(input0, input1))),
+        None => Ok((input2, mk::untyped_var(name).between(input0, input1))),
     }
 }
 
@@ -424,43 +429,42 @@ fn named_typ(input: &str) -> IResult<&str, Type> {
     Ok((input, Type { name, type_args }))
 }
 
-fn call_arg_mut(input: &str) -> IResult<&str, CallArg> {
-    let (input, name) = preceded(keyword(Word::Mut), identifier).parse(input)?;
-    Ok((input, CallArg::MutVar { name, typ: None }))
-}
-
-fn call_arg_expr(input: &str) -> IResult<&str, CallArg> {
-    let (input, expr) = expr_comma(input)?;
-    Ok((input, CallArg::Expr(expr)))
+fn opt_mut(input: &str) -> IResult<&str, bool> {
+    opt(keyword(Word::Mut)).map(|o|o.is_some()).parse(input)
 }
 
 fn call_suffix(name: String) -> impl Fn(&str) -> IResult<&str, Expr> {
     move |input: &str| {
         let (input, args) = delimited(
             symbol(Symbol::OpenParen),
-            separated_list0(symbol(Symbol::Comma), alt((call_arg_mut, call_arg_expr))),
+            separated_list0(symbol(Symbol::Comma), pair(opt_mut, expr_comma)),
             symbol(Symbol::CloseParen),
         )
         .parse(input)?;
+        let (mutable_args, args) = args.into_iter().unzip();
         Ok((
             input,
-            Expr::FunctionCall {
-                name: name.clone(),
-                args,
-                type_instantiations: vec![],
-                return_type: None,
-            },
+            mk::function_call(&name, args, mutable_args)
         ))
     }
 }
+
+fn expr_or_empty(input: &str) -> IResult<&str, Expr> {
+    let (input, expr_opt) = opt(expr).parse(input)?;
+    match expr_opt {
+        Some(expr) => Ok((input, expr)),
+        None => Ok((input, Literal::Unit.as_expr().between(input, input))),
+    }
+}
+
 fn semicolon_suffix(left: Expr) -> impl Fn(&str) -> IResult<&str, Expr> {
     move |input: &str| {
-        let (input, _) = symbol(Symbol::Semicolon)(input)?;
-        let (input, right) = opt(expr).parse(input)?;
-        let right = right.unwrap_or(Expr::Literal(Literal::Unit));
+        let (input0, _) = whitespace0(input)?;
+        let (input1, _) = symbol(Symbol::Semicolon)(input0)?;
+        let (input2, right) = expr_or_empty(input1)?;
         Ok((
-            input,
-            Expr::Semicolon(Box::new(Stmt::Expr(left.clone())), Box::new(right)),
+            input2,
+            left.clone().semicolon(right).between(input1, input2)
         ))
     }
 }
@@ -469,56 +473,47 @@ fn expr_tight(input: &str) -> IResult<&str, Expr> {
     alt((
         variable_or_call,
         literal,
-        delimited(
-            symbol(Symbol::OpenSquare),
-            expr_array_contents,
-            symbol(Symbol::CloseSquare),
-        ),
-        delimited(
-            symbol(Symbol::OpenParen),
-            expr_parenthesized,
-            symbol(Symbol::CloseParen),
-        ),
+        expr_vector,
+        expr_parenthesized,
         delimited(symbol(Symbol::OpenBrace), expr, symbol(Symbol::CloseBrace)),
     ))
     .parse(input)
 }
 
 fn expr_suffixed(input: &str) -> IResult<&str, Expr> {
-    let (input, base) = expr_tight(input)?;
-    let (input, index) = opt(delimited(
-        symbol(Symbol::OpenSquare),
-        expr_comma,
-        symbol(Symbol::CloseSquare),
-    ))
-    .parse(input)?;
-    if let Some(index) = index {
-        Ok((
-            input,
-            Expr::SeqAt {
-                seq: Box::new(base),
-                index: Box::new(index),
-            },
-        ))
-    } else {
-        Ok((input, base))
+    let (input0, base) = expr_tight(input)?;
+    let (input1, sym) = opt(alt((symbol(Symbol::OpenSquare), /*symbol(Symbol::Dot)*/))).parse(input0)?;
+    match sym {
+        None => Ok((input1, base)),
+        Some(Symbol::OpenSquare) => {
+            let (input2, index) = terminated(expr_comma, symbol(Symbol::CloseSquare)).parse(input1)?;
+            Ok((
+                input2,
+                base.square_bracket_at(index).between(input0, input1)
+            ))
+        }
+        // Some(Symbol::Dot) => {
+        //     let (input2, index) = integer_u64(input1)?;
+        //     Ok((
+        //         input2,
+        //         base.dot_at(index as usize).between(input0, input2)
+        //     ))
+        // }
+        _ => unreachable!()
     }
 }
 
 fn expr_prefixed(input: &str) -> IResult<&str, Expr> {
-    alt((
-        preceded(
-            symbol(Symbol::Minus),
-            map(expr_prefixed, |e| Expr::FunctionCall {
-                name: "neg".to_owned(),
-                args: vec![CallArg::Expr(e)],
-                type_instantiations: vec![],
-                return_type: None,
-            }),
-        ),
-        expr_suffixed,
+    let (input0, _) = whitespace0(input)?;
+    let (input1, minus) = opt(symbol(Symbol::Minus)).parse(input0)?;
+    if minus.is_none() {
+        return expr_suffixed(input0);
+    }
+    let (input2, expr) = expr_suffixed(input1)?;
+    Ok((
+        input2,
+        mk::immut_function_call("neg", vec![expr]).between(input0, input1)
     ))
-    .parse(input)
 }
 
 fn plusminus(input: &str) -> IResult<&str, Symbol> {
@@ -547,19 +542,19 @@ fn cmpop(input: &str) -> IResult<&str, Symbol> {
 }
 
 impl Symbol {
-    fn to_function_name(&self) -> String {
+    fn to_function_name(&self) -> &'static str {
         match self {
-            Symbol::Plus => "+".to_owned(),
-            Symbol::Minus => "-".to_owned(),
-            Symbol::Star => "*".to_owned(),
-            Symbol::Slash => "/".to_owned(),
-            Symbol::Percent => "%".to_owned(),
-            Symbol::EqualEqual => "==".to_owned(),
-            Symbol::NotEqual => "!=".to_owned(),
-            Symbol::Lt => "<".to_owned(),
-            Symbol::Le => "<=".to_owned(),
-            Symbol::Gt => ">".to_owned(),
-            Symbol::Ge => ">=".to_owned(),
+            Symbol::Plus => "+",
+            Symbol::Minus => "-",
+            Symbol::Star => "*",
+            Symbol::Slash => "/",
+            Symbol::Percent => "%",
+            Symbol::EqualEqual => "==",
+            Symbol::NotEqual => "!=",
+            Symbol::Lt => "<",
+            Symbol::Le => "<=",
+            Symbol::Gt => ">",
+            Symbol::Ge => ">=",
             _ => unreachable!(),
         }
     }
@@ -569,97 +564,75 @@ fn expr_times_divide_mod(input: &str) -> IResult<&str, Expr> {
     let (input, mut exprs) = expr_prefixed(input)?;
     let mut inp = input;
     loop {
-        let (input, op) = opt(pair(timesdividemod, expr_prefixed)).parse(inp)?;
-        inp = input;
-
-        if let Some((sym, rhs)) = op {
-            let new_expr = Expr::FunctionCall {
-                name: sym.to_function_name(),
-                args: vec![CallArg::Expr(exprs.clone()), CallArg::Expr(rhs)],
-                type_instantiations: vec![],
-                return_type: None,
-            };
-            exprs = new_expr;
-        } else {
-            break;
+        let (input0, _) = whitespace0(inp)?;
+        let (input1, sym) = opt(timesdividemod).parse(input0)?;
+        if sym.is_none() {
+            return Ok((input1, exprs));
         }
+        let (input2, rhs) = expr_prefixed(input1)?;
+        exprs = mk::immut_function_call(sym.unwrap().to_function_name(), vec![exprs, rhs]).between(input0, input1);
+        inp = input2;
     }
-    Ok((inp, exprs))
 }
 
 fn expr_plusminus(input: &str) -> IResult<&str, Expr> {
     let (input, mut exprs) = expr_times_divide_mod(input)?;
     let mut inp = input;
     loop {
-        let (input, op) = opt(pair(plusminus, expr_times_divide_mod)).parse(inp)?;
-        inp = input;
-
-        if let Some((sym, rhs)) = op {
-            let new_expr = Expr::FunctionCall {
-                name: sym.to_function_name(),
-                args: vec![CallArg::Expr(exprs.clone()), CallArg::Expr(rhs)],
-                type_instantiations: vec![],
-                return_type: None,
-            };
-            exprs = new_expr;
-        } else {
-            break;
+        let (input0, _) = whitespace0(inp)?;
+        let (input1, sym) = opt(plusminus).parse(input0)?;
+        if sym.is_none() {
+            return Ok((input1, exprs));
         }
+        let (input2, rhs) = expr_times_divide_mod(input1)?;
+        exprs = mk::immut_function_call(sym.unwrap().to_function_name(), vec![exprs, rhs]).between(input0, input1);
+        inp = input2;
     }
-    Ok((inp, exprs))
 }
 
 fn expr_cmp(input: &str) -> IResult<&str, Expr> {
     let (input, expr) = expr_plusminus(input)?;
-    let (input, cmp_opt) = opt(pair(cmpop, expr_plusminus)).parse(input)?;
-    match cmp_opt {
-        Some((sym, rhs)) => {
-            let new_expr = Expr::FunctionCall {
-                name: sym.to_function_name(),
-                args: vec![CallArg::Expr(expr), CallArg::Expr(rhs)],
-                type_instantiations: vec![],
-                return_type: None,
-            };
-            Ok((input, new_expr))
-        }
-        None => Ok((input, expr)),
+    let (input0, _) = whitespace0(input)?;
+    let (input1, sym) = opt(cmpop).parse(input0)?;
+    if sym.is_none() {
+        return Ok((input1, expr));
     }
+    let (input2, rhs) = expr_plusminus(input1)?;
+    let new_expr = mk::immut_function_call(
+        sym.unwrap().to_function_name(),
+        vec![expr, rhs],
+    ).between(input0, input1);
+    Ok((input2, new_expr))
 }
 
 fn expr_conjunction(input: &str) -> IResult<&str, Expr> {
     let (input, expr) = expr_cmp(input)?;
-    let (input, and_opt) =
-        opt(preceded(symbol(Symbol::LogicalAnd), expr_conjunction)).parse(input)?;
-    match and_opt {
-        Some(rhs) => {
-            let new_expr = Expr::FunctionCall {
-                name: "&&".to_owned(),
-                args: vec![CallArg::Expr(expr), CallArg::Expr(rhs)],
-                type_instantiations: vec![],
-                return_type: None,
-            };
-            Ok((input, new_expr))
-        }
-        None => Ok((input, expr)),
+    let (input0, _) = whitespace0(input)?;
+    let (input1, sym) = opt(symbol(Symbol::LogicalAnd)).parse(input0)?;
+    if sym.is_none() {
+        return Ok((input1, expr));
     }
+    let (input2, rhs) = expr_conjunction(input1)?;
+    let new_expr = mk::immut_function_call(
+        "&&",
+        vec![expr, rhs],
+    ).between(input0, input1);
+    Ok((input2, new_expr))
 }
 
 fn expr_disjunction(input: &str) -> IResult<&str, Expr> {
     let (input, expr) = expr_conjunction(input)?;
-    let (input, or_opt) =
-        opt(preceded(symbol(Symbol::LogicalOr), expr_disjunction)).parse(input)?;
-    match or_opt {
-        Some(rhs) => {
-            let new_expr = Expr::FunctionCall {
-                name: "||".to_owned(),
-                args: vec![CallArg::Expr(expr), CallArg::Expr(rhs)],
-                type_instantiations: vec![],
-                return_type: None,
-            };
-            Ok((input, new_expr))
-        }
-        None => Ok((input, expr)),
+    let (input0, _) = whitespace0(input)?;
+    let (input1, sym) = opt(symbol(Symbol::LogicalOr)).parse(input0)?;
+    if sym.is_none() {
+        return Ok((input1, expr));
     }
+    let (input2, rhs) = expr_disjunction(input1)?;
+    let new_expr = mk::immut_function_call(
+        "||",
+        vec![expr, rhs],
+    ).between(input0, input1);
+    Ok((input2, new_expr))
 }
 
 fn expr_comma(input: &str) -> IResult<&str, Expr> {
@@ -676,35 +649,48 @@ fn expr_semicolon(input: &str) -> IResult<&str, Expr> {
 }
 
 fn expr_parenthesized(input: &str) -> IResult<&str, Expr> {
-    let (input, elems) = separated_list0(symbol(Symbol::Comma), expr_comma).parse(input)?;
+    let (input0, _) = whitespace0(input)?;
+    let (input1, _) = symbol(Symbol::OpenParen)(input0)?;
+    let (input2, elems) = separated_list0(symbol(Symbol::Comma), expr_comma).parse(input1)?;
+    let (input3, comma) = opt(symbol(Symbol::Comma)).parse(input2)?;
+    let (input4, _) = symbol(Symbol::CloseParen)(input3)?;
     if elems.is_empty() {
+        if comma.is_some() {
+            // (,) is invalid
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input4,
+                nom::error::ErrorKind::Tag,
+            )));
+        }
         // ()
-        Ok((input, Expr::Literal(Literal::Unit)))
+        Ok((input4, Literal::Unit.as_expr().between(input0, input4)))
     } else {
-        let (input, comma) = opt(symbol(Symbol::Comma)).parse(input)?;
         if comma.is_some() || elems.len() > 1 {
             // (x,) or (x,y...)
-            Ok((input, Expr::RoundSequence { elems }))
+            Ok((input4, mk::tuple(elems).between(input0, input1)))
         } else {
             // (x)
-            Ok((input, elems.into_iter().next().unwrap()))
+            Ok((input4, elems.into_iter().next().unwrap()))
         }
     }
 }
 
-fn expr_array_contents(input: &str) -> IResult<&str, Expr> {
-    let (input, elems) = separated_list0(symbol(Symbol::Comma), expr_comma).parse(input)?;
-    let input = if !elems.is_empty() {
-        opt(symbol(Symbol::Comma)).parse(input)?.0
-    } else {
-        input
-    };
+fn expr_vector(input: &str) -> IResult<&str, Expr> {
+    let (input0, _) = whitespace0(input)?;
+    let (input1, _) = symbol(Symbol::OpenSquare)(input0)?;
+    let (input2, elems) = separated_list0(symbol(Symbol::Comma), expr_comma).parse(input1)?;
+    let (input3, comma) = opt(symbol(Symbol::Comma)).parse(input2)?;
+    let (input4, _) = symbol(Symbol::CloseSquare)(input3)?;
+    if comma.is_some() && elems.is_empty() {
+        // [,] is invalid
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input4,
+            nom::error::ErrorKind::Tag,
+        )));
+    }
     Ok((
-        input,
-        Expr::SquareSequence {
-            elems,
-            elem_type: None,
-        },
+        input4,
+        mk::vector(elems).between(input0, input1)
     ))
 }
 
@@ -736,27 +722,25 @@ fn keyword(expected: Word) -> impl Fn(&str) -> IResult<&str, Word> {
     }
 }
 
-fn stmt_let(input: &str) -> IResult<&str, Stmt> {
-    let (input, _) = keyword(Word::Let)(input)?;
-    let (input, mutable) = opt(keyword(Word::Mut)).parse(input)?;
-    let (input, name) = identifier(input)?;
-    let (input, t) = opt(preceded(symbol(Symbol::Colon), typ)).parse(input)?;
+fn expr_let(input: &str) -> IResult<&str, Expr> {
+    let (input0, _) = whitespace0(input)?;
+    let (input1, _) = keyword(Word::Let)(input)?;
+    let (input2, mutable) = opt(keyword(Word::Mut)).parse(input1)?;
+    let (input3, name) = identifier(input2)?;
+    let (input4, t) = opt(preceded(symbol(Symbol::Colon), typ)).parse(input3)?;
     if mutable.is_some() && t.is_none() {
         return Err(nom::Err::Error(nom::error::Error::new(
-            input,
+            input4,
             nom::error::ErrorKind::Tag,
         )));
     }
-    let (input, _) = symbol(Symbol::Assign)(input)?;
-    let (input, value) = expr_comma(input)?;
+    let (input5, _) = symbol(Symbol::Assign)(input4)?;
+    let (input6, value) = expr_comma(input5)?;
+    let (input7, _) = symbol(Symbol::Semicolon)(input6)?;
+    let (input8, body) = expr_or_empty(input7)?;  // empty would be a bit weird here as we'd be defining a variable that then goes unused
     Ok((
-        input,
-        Stmt::Let {
-            name,
-            mutable: mutable.is_some(),
-            typ: t,
-            value,
-        },
+        input8,
+        mk::let_expr(name, mutable.is_some(), t, value, body).between(input0, input2)
     ))
 }
 
@@ -770,26 +754,18 @@ fn assignop(input: &str) -> IResult<&str, AssignOp> {
     .parse(input)
 }
 
-fn stmt_assign(input: &str) -> IResult<&str, Stmt> {
-    let (input, name) = identifier(input)?;
-    let (input, op) = assignop(input)?;
-    let (input, value) = expr_comma(input)?;
-    Ok((input, Stmt::Assign { name, op, value }))
-}
-
-fn stmt(input: &str) -> IResult<&str, Stmt> {
-    alt((stmt_let, stmt_assign)).parse(input)
-}
-
-fn stmt_semicolon(input: &str) -> IResult<&str, Expr> {
-    let (input, first) = stmt(input)?;
-    let (input, _) = symbol(Symbol::Semicolon)(input)?;
-    let (input, second) = expr(input)?;
-    Ok((input, Expr::Semicolon(Box::new(first), Box::new(second))))
+fn expr_assign(input: &str) -> IResult<&str, Expr> {
+    let (input0, name) = identifier(input)?;
+    let (input1, _) = whitespace0(input0)?;
+    let (input2, op) = assignop(input1)?;
+    let (input3, value) = expr_comma(input2)?;
+    let (input4, _) = symbol(Symbol::Semicolon)(input3)?;
+    let (input5, body) = expr_or_empty(input4)?;
+    Ok((input5, mk::assign(mk::untyped_var(name), op, value).between(input1, input2).semicolon(body).between(input3, input4)))
 }
 
 fn expr(input: &str) -> IResult<&str, Expr> {
-    alt((stmt_semicolon, expr_semicolon)).parse(input)
+    alt((expr_let, expr_assign, expr_semicolon)).parse(input)
 }
 
 fn arg(input: &str) -> IResult<&str, Arg> {
@@ -822,14 +798,6 @@ fn unnamed_ret(input: &str) -> IResult<&str, (Option<String>, Type)> {
 
 fn ret(input: &str) -> IResult<&str, (Option<String>, Type)> {
     alt((named_ret, unnamed_ret)).parse(input)
-}
-
-fn expr_or_empty(input: &str) -> IResult<&str, Expr> {
-    let (input, expr_opt) = opt(expr).parse(input)?;
-    match expr_opt {
-        Some(e) => Ok((input, e)),
-        None => Ok((input, Expr::Literal(Literal::Unit))),
-    }
 }
 
 fn attribute_check_decisions(input: &str) -> IResult<&str, FuncAttribute> {
@@ -1015,16 +983,16 @@ mod test {
 
     #[test]
     fn test_let() {
-        let stmt = "let x = 5";
-        let result = super::stmt(stmt);
+        let stmt = "let x = 5; ()";
+        let result = super::expr(stmt);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().0, "");
     }
 
     #[test]
     fn test_let_mut() {
-        let stmt = "let mut x:u64 = 5";
-        let result = super::stmt(stmt);
+        let stmt = "let mut x:u64 = 5; ()";
+        let result = super::expr(stmt);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().0, "");
     }
@@ -1039,8 +1007,8 @@ mod test {
 
     #[test]
     fn test_plusassign() {
-        let stmt = "x += 10";
-        let result = super::stmt(stmt);
+        let stmt = "x += 10; ()";
+        let result = super::expr(stmt);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().0, "");
     }

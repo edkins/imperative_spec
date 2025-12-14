@@ -72,6 +72,12 @@ impl Display for Literal {
     }
 }
 
+impl std::fmt::Debug for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 impl Display for Bound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -88,8 +94,13 @@ enum BindingStrength {
     NeverBracket,
     Semicolon,
     Comma,
+    Implication,
+    Disjunction,
+    Conjunction,
     Comparison,
     PlusMinus,
+    TimesDivide,
+    AlwaysBracket,
 }
 
 impl BindingStrength {
@@ -116,24 +127,42 @@ impl BindingStrength {
             Ok(())
         }
     }
+
+    fn open_paren(
+        self,
+        f: &mut std::fmt::Formatter<'_>,
+        inner: BindingStrength,
+    ) -> std::fmt::Result {
+        if inner < self {
+            write!(f, "(")
+        } else {
+            Ok(())
+        }
+    }
+
+    fn close_paren(
+        self,
+        f: &mut std::fmt::Formatter<'_>,
+        inner: BindingStrength,
+    ) -> std::fmt::Result {
+        if inner < self {
+            write!(f, ")")
+        } else {
+            Ok(())
+        }
+    }
 }
 
-impl CallArg {
-    fn fmt_with_binding_strength(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-        strength: BindingStrength,
-    ) -> std::fmt::Result {
-        match self {
-            CallArg::Expr(expr) => expr.fmt_with_binding_strength(f, strength),
-            CallArg::MutVar { name, typ } => {
-                if let Some(typ) = typ {
-                    write!(f, "mut {}: {}", name, typ)
-                } else {
-                    write!(f, "mut {}", name)
-                }
-            }
-        }
+fn binop_binding_strength(op: &str) -> Option<BindingStrength> {
+    match op {
+        "=" | "+=" | "-=" | "*=" => Some(BindingStrength::Semicolon),
+        "==>" => Some(BindingStrength::Implication),
+        "||" => Some(BindingStrength::Disjunction),
+        "&&" => Some(BindingStrength::Conjunction),
+        "==" | "!=" | "<" | "<=" | ">" | ">=" => Some(BindingStrength::Comparison),
+        "+" | "-" => Some(BindingStrength::PlusMinus),
+        "*" | "/" | "%" => Some(BindingStrength::TimesDivide),
+        _ => None,
     }
 }
 
@@ -144,37 +173,22 @@ impl Expr {
         strength: BindingStrength,
     ) -> std::fmt::Result {
         match self {
-            Expr::Literal(literal) => write!(f, "{}", literal),
-            Expr::Variable { name, typ } => {
-                write!(f, "{}", name)?;
-                if let Some(typ) = typ {
-                    write!(f, ":{}", typ)
-                } else {
-                    Ok(())
-                }
-            }
-            Expr::FunctionCall {
-                name,
-                args,
-                type_instantiations,
-                return_type,
-            } => {
-                match name as &str {
-                    "==" | "!=" | "<" | "<=" | ">" | ">=" => {
-                        strength.open_brace(f, BindingStrength::Comparison)?;
-                        args[0].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
+            Expr::Expr { kind, args, .. } => match kind {
+                ExprKind::Literal { literal } => write!(f, "{}", literal),
+                ExprKind::Function { name, type_instantiations, .. } => {
+                    if name == ";" && args.len() == 2 {
+                        strength.open_brace(f, BindingStrength::Semicolon)?;
+                        args[0].fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
+                        writeln!(f, ";")?;
+                        args[1].fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
+                        strength.close_brace(f, BindingStrength::Semicolon)
+                    } else if let Some(op_strength) = binop_binding_strength(name) {
+                        strength.open_paren(f, op_strength)?;
+                        args[0].fmt_with_binding_strength(f, op_strength)?;
                         write!(f, " {} ", name)?;
-                        args[1].fmt_with_binding_strength(f, BindingStrength::Comparison)?;
-                        strength.close_brace(f, BindingStrength::Comparison)?;
-                    }
-                    "+" | "-" => {
-                        strength.open_brace(f, BindingStrength::PlusMinus)?;
-                        args[0].fmt_with_binding_strength(f, BindingStrength::PlusMinus)?;
-                        write!(f, " {} ", name)?;
-                        args[1].fmt_with_binding_strength(f, BindingStrength::PlusMinus)?;
-                        strength.close_brace(f, BindingStrength::PlusMinus)?;
-                    }
-                    _ => {
+                        args[1].fmt_with_binding_strength(f, op_strength)?;
+                        strength.close_paren(f, op_strength)
+                    } else {
                         write!(f, "{}", name)?;
                         if !type_instantiations.is_empty() {
                             write!(f, "<")?;
@@ -194,46 +208,44 @@ impl Expr {
                             }
                         }
                         write!(f, ")")?;
+                        Ok(())
                     }
                 }
-                if let Some(return_type) = return_type {
-                    // write!(f, ":{}", return_type)?;
-                    Ok(())
-                } else {
-                    Ok(())
-                }
-            }
-            Expr::Semicolon(stmt, expr) => {
-                strength.open_brace(f, BindingStrength::Semicolon)?;
-                stmt.fmt(f)?;
-                writeln!(f, ";")?;
-                expr.fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
-                strength.close_brace(f, BindingStrength::Semicolon)
-            }
-            Expr::SquareSequence { elems, elem_type } => {
-                write!(f, "[")?;
-                for (i, element) in elems.iter().enumerate() {
-                    element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
-                    if i != elems.len() - 1 {
-                        write!(f, ", ")?;
+                ExprKind::SquareSequence { .. } => {
+                    write!(f, "[")?;
+                    for (i, element) in args.iter().enumerate() {
+                        element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                        if i != args.len() - 1 {
+                            write!(f, ", ")?;
+                        }
                     }
+                    write!(f, "]")
                 }
-                if let Some(typ) = elem_type {
-                    write!(f, ":{}", typ)?;
-                }
-                write!(f, "]")
-            }
-            Expr::RoundSequence { elems } => {
-                write!(f, "(")?;
-                for (i, element) in elems.iter().enumerate() {
-                    element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
-                    if i != elems.len() - 1 || elems.len() == 1 {
-                        write!(f, ", ")?;
+                ExprKind::RoundSequence { .. } => {
+                    write!(f, "(")?;
+                    for (i, element) in args.iter().enumerate() {
+                        element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                        if i != args.len() - 1 || args.len() == 1 {
+                            write!(f, ", ")?;
+                        }
                     }
+                    write!(f, ")")
                 }
-                write!(f, ")")
+                ExprKind::UnknownSequenceAt => {
+                    args[0].fmt_with_binding_strength(f, BindingStrength::AlwaysBracket)?;
+                    write!(f, "?[")?;
+                    args[1].fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
+                    write!(f, "]")
+                }
+                ExprKind::TupleAt { index, .. } => {
+                    args[0].fmt_with_binding_strength(f, BindingStrength::AlwaysBracket)?;
+                    write!(f, ".{}", index)
+                }
             }
-            Expr::Lambda { args, body } => {
+            Expr::Variable { name, .. } => {
+                write!(f, "{}", name)
+            }
+            Expr::Lambda { args, body, .. } => {
                 write!(f, "|")?;
                 for (i, arg) in args.iter().enumerate() {
                     write!(f, "{}: {}", arg.name, arg.arg_type)?;
@@ -244,11 +256,21 @@ impl Expr {
                 write!(f, "| ")?;
                 body.fmt_with_binding_strength(f, BindingStrength::NeverBracket)
             }
-            Expr::SeqAt { seq, index } => {
-                seq.fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
-                write!(f, "[")?;
-                index.fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
-                write!(f, "]")
+            Expr::Let { name, mutable, typ, value, body, .. } => {
+                strength.open_brace(f, BindingStrength::Semicolon)?;
+                if *mutable {
+                    write!(f, "let mut {}", name)?;
+                } else {
+                    write!(f, "let {}", name)?;
+                }
+                if let Some(typ) = typ {
+                    write!(f, ": {}", typ)?;
+                }
+                write!(f, " = ")?;
+                value.fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
+                writeln!(f, ";")?;
+                body.fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
+                strength.close_brace(f, BindingStrength::Semicolon)
             }
         }
     }
@@ -343,44 +365,6 @@ impl Display for FuncDef {
     }
 }
 
-impl Display for Stmt {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Stmt::Expr(expr) => write!(f, "{}", expr),
-            Stmt::Let {
-                name,
-                mutable,
-                typ,
-                value,
-            } => {
-                if let Some(typ) = typ {
-                    if *mutable {
-                        write!(f, "let mut {}: {} = {}", name, typ, value)
-                    } else {
-                        write!(f, "let {}: {} = {}", name, typ, value)
-                    }
-                } else {
-                    if *mutable {
-                        write!(f, "let mut {} = {}", name, value)
-                    } else {
-                        write!(f, "let {} = {}", name, value)
-                    }
-                }
-            }
-            Stmt::Assign { name, op, value } => {
-                let op_str = match op {
-                    AssignOp::Assign => "=",
-                    AssignOp::AddAssign => "+=",
-                    AssignOp::SubAssign => "-=",
-                    AssignOp::MulAssign => "*=",
-                };
-                write!(f, "{} {} ", name, op_str)?;
-                value.fmt_with_binding_strength(f, BindingStrength::PlusMinus)
-            }
-        }
-    }
-}
-
 impl Display for SourceFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for func in &self.functions {
@@ -392,13 +376,10 @@ impl Display for SourceFile {
 
 #[cfg(test)]
 mod test {
-    use crate::syntax::ast::*;
+    use crate::syntax::{ast::*, mk};
 
     fn v(name: &str) -> Expr {
-        Expr::Variable {
-            name: name.to_owned(),
-            typ: None,
-        }
+        mk::untyped_var(name.to_owned())
     }
 
     #[test]
@@ -432,28 +413,20 @@ mod test {
                 name: "i32".to_owned(),
                 type_args: vec![],
             },
-            body: Expr::FunctionCall {
-                name: "sum".to_owned(),
-                args: vec![CallArg::Expr(v("a")), CallArg::Expr(v("b"))],
-                type_instantiations: vec![],
-                return_type: None,
-            },
+            body: mk::immut_function_call(
+                "sum",
+                vec![v("a"), v("b")],
+            ),
         };
 
-        let expected = "fn add(a: i32, b: i32) -> i32\n{\nsum(a, b)\n}";
+        let expected = "fn add(a:i32, b:i32) -> (__ret__:i32)\n{\nsum(a, b)\n}";
         let actual = format!("{}", func);
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn multiple_semicolons() {
-        let semi = Expr::Semicolon(
-            Box::new(Stmt::Expr(v("x"))),
-            Box::new(Expr::Semicolon(
-                Box::new(Stmt::Expr(v("y"))),
-                Box::new(v("z")),
-            )),
-        );
+        let semi = v("x").semicolon(v("y").semicolon(v("z")));
         let expected = "x;\ny;\nz";
         let actual = format!("{}", semi);
         assert_eq!(actual, expected);
@@ -480,23 +453,18 @@ mod test {
             preconditions: vec![],
             postconditions: vec![],
             return_name: "__ret__".to_owned(),
-            body: Expr::FunctionCall {
-                name: "process".to_owned(),
-                args: vec![
-                    CallArg::Expr(v("x")),
-                    CallArg::Expr(Expr::Semicolon(
-                        Box::new(Stmt::Let {
-                            name: "y".to_owned(),
-                            mutable: false,
-                            typ: None,
-                            value: Expr::Literal(Literal::I64(10)),
-                        }),
-                        Box::new(v("y")),
-                    )),
+            body: mk::immut_function_call("process",
+                vec![
+                    v("x"),
+                    mk::let_expr(
+                        "y".to_owned(),
+                        false,
+                        None,
+                        Literal::I64(10).as_expr(),
+                        v("y"),
+                    ),
                 ],
-                type_instantiations: vec![],
-                return_type: None,
-            },
+            ),
         };
 
         let expected = "process(x, {let y = 10;\ny})";

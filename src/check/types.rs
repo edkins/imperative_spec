@@ -1,6 +1,6 @@
 use crate::{
     check::ops::{Ops, big_and},
-    syntax::ast::{Arg, Bound, Expr, Literal, Type, TypeArg},
+    syntax::ast::{Arg, Bound, Expr, ExprInfo, ExprKind, Literal, Type, TypeArg},
 };
 
 #[derive(Debug)]
@@ -41,60 +41,10 @@ impl TypeError {
 impl Expr {
     pub fn typ(&self) -> Type {
         match self {
-            Expr::Literal(lit) => lit.typ(),
-            Expr::Variable { name, typ } => typ
-                .clone()
-                .expect(&format!("Variable expression {} must have type", name)),
-            Expr::Semicolon(_, expr) => expr.typ(),
-            Expr::FunctionCall { return_type, .. } => return_type
-                .clone()
-                .expect("Function call must have return type"),
-            Expr::SquareSequence { elem_type, .. } => Type {
-                name: "Vec".to_owned(),
-                type_args: vec![TypeArg::Type(
-                    elem_type
-                        .clone()
-                        .expect("Square sequence must have element type"),
-                )],
-            },
-            Expr::RoundSequence { elems } => {
-                let type_args = elems
-                    .iter()
-                    .map(|e| TypeArg::Type(e.typ()))
-                    .collect::<Vec<TypeArg>>();
-                Type {
-                    name: "Tuple".to_owned(),
-                    type_args,
-                }
-            }
-            Expr::Lambda { args, body } => {
-                let mut type_args = args
-                    .iter()
-                    .map(|arg| TypeArg::Type(arg.arg_type.clone()))
-                    .collect::<Vec<TypeArg>>();
-                type_args.push(TypeArg::Type(body.typ()));
-                Type {
-                    name: "Lambda".to_owned(),
-                    type_args,
-                }
-            }
-            Expr::SeqAt { seq, index } => {
-                let seq_type = seq.typ();
-                if seq_type.is_square_seq() {
-                    seq_type
-                        .get_uniform_square_elem_type()
-                        .expect("SeqAt on non-sequence type")
-                        .clone()
-                } else {
-                    let index = index
-                        .as_literal_u64()
-                        .expect("SeqAt index must be literal u64");
-                    seq_type
-                        .get_round_elem_type(index)
-                        .expect("SeqAt on non-sequence type")
-                        .clone()
-                }
-            }
+            Expr::Expr{info, ..} => info.typ.clone().unwrap(),
+            Expr::Lambda {info, ..} => info.typ.clone().unwrap(),
+            Expr::Let {info, ..} => info.typ.clone().unwrap(),
+            Expr::Variable {info, ..} => info.typ.clone().unwrap(),
         }
     }
 }
@@ -128,6 +78,19 @@ impl TypeArg {
     }
 }
 
+impl Literal {
+    pub fn typed_expr(&self) -> Expr {
+        Expr::Expr {
+            kind: ExprKind::Literal { literal: self.clone() },
+            args: vec![],
+            info: ExprInfo {
+                typ: Some(self.typ()),
+                ..Default::default()
+            },
+        }
+    }
+}
+
 impl Type {
     // pub fn type_assertions_on_name(&self, more_general_type: &Type, name: &str) -> Vec<TExpr> {
     //     assert!(self.is_subtype_of(more_general_type));
@@ -141,7 +104,21 @@ impl Type {
     pub fn var(&self, name: &str) -> Expr {
         Expr::Variable {
             name: name.to_owned(),
-            typ: Some(self.clone()),
+            info: ExprInfo{typ: Some(self.clone()), ..Default::default()},
+        }
+    }
+
+    pub fn vec(&self) -> Type {
+        Type {
+            name: "Vec".to_owned(),
+            type_args: vec![TypeArg::Type(self.clone())],
+        }
+    }
+
+    pub fn tuple(types: &[Type]) -> Type {
+        Type {
+            name: "Tuple".to_owned(),
+            type_args: types.iter().cloned().map(TypeArg::Type).collect(),
         }
     }
 
@@ -309,7 +286,7 @@ impl Type {
                 let elem_type = self.uniform_square_elem_type()?;
                 let mut conds = vec![];
                 if let Some(len) = self.get_square_seq_length() {
-                    conds.push(expr.seq_len()?.eq(&Expr::Literal(Literal::U64(len)))?);
+                    conds.push(expr.seq_len()?.eq(&Literal::U64(len).typed_expr())?);
                 }
                 if let Some(lambda) = elem_type.type_lambda(param_list)? {
                     conds.push(expr.seq_all(&lambda)?);
@@ -343,7 +320,7 @@ impl Type {
                     message: format!("Type {} should have only type arguments", self.name),
                 })?;
                 for (i, elem_type) in elem_types.iter().enumerate() {
-                    let elem_expr = expr.tuple_at(i as u64)?;
+                    let elem_expr = expr.tuple_at(i)?;
                     conds.extend_from_slice(&elem_type.type_assertions(elem_expr, param_list)?);
                 }
                 Ok(conds)
@@ -353,7 +330,6 @@ impl Type {
                 if *self == self.skeleton(param_list)? {
                     Ok(vec![])
                 } else {
-                    panic!();
                     Err(TypeError {
                         message: format!(
                             "Cannot generate type assertions for conditioned lambda type {}",
@@ -594,10 +570,7 @@ impl Type {
 
     fn type_lambda(&self, param_list: &[String]) -> Result<Option<Expr>, TypeError> {
         let more_general_type = self.skeleton(param_list)?;
-        let var = Expr::Variable {
-            name: "__item__".to_owned(),
-            typ: Some(more_general_type.clone()),
-        };
+        let var = more_general_type.var("__item__"); // TODO: this will conflict if there are nested ones
         let conds = self.type_assertions(var, param_list)?;
         if conds.is_empty() {
             return Ok(None);
@@ -609,6 +582,10 @@ impl Type {
                 arg_type: more_general_type.clone(),
             }],
             body: Box::new(big_and(&conds).unwrap()),
+            info: ExprInfo {
+                typ: Some(Type::lambda(&[more_general_type], &Type::basic("bool"))),
+                ..Default::default()
+            },
         }))
     }
 }
@@ -633,14 +610,14 @@ fn bounds_to_expr(lower: Bound, upper: Bound, expr: Expr) -> Vec<Expr> {
     let mut result = vec![];
     match lower {
         Bound::MinusInfinity => {}
-        Bound::I64(i) => result.push(expr.ge(&Expr::Literal(Literal::I64(i))).unwrap()),
-        Bound::U64(u) => result.push(expr.ge(&Expr::Literal(Literal::U64(u))).unwrap()),
+        Bound::I64(i) => result.push(expr.ge(&Literal::I64(i).typed_expr()).unwrap()),
+        Bound::U64(u) => result.push(expr.ge(&Literal::U64(u).typed_expr()).unwrap()),
         Bound::PlusInfinity => unreachable!(),
     }
     match upper {
         Bound::PlusInfinity => {}
-        Bound::I64(i) => result.push(expr.le(&Expr::Literal(Literal::I64(i))).unwrap()),
-        Bound::U64(u) => result.push(expr.le(&Expr::Literal(Literal::U64(u))).unwrap()),
+        Bound::I64(i) => result.push(expr.le(&Literal::I64(i).typed_expr()).unwrap()),
+        Bound::U64(u) => result.push(expr.le(&Literal::U64(u).typed_expr()).unwrap()),
         Bound::MinusInfinity => unreachable!(),
     }
     result

@@ -1,12 +1,12 @@
 use crate::{
     check::{builtins::known_builtin, types::TypeError},
-    syntax::ast::{Arg, CallArg, Expr, FuncDef, Literal, Type},
+    syntax::ast::{Arg, Expr, ExprInfo, ExprKind, FuncDef, Literal, Type},
 };
 use std::slice::from_ref;
 
 pub fn big_and(exprs: &[Expr]) -> Result<Expr, TypeError> {
     if exprs.is_empty() {
-        return Ok(Expr::Literal(Literal::Bool(true)));
+        return Ok(Literal::Bool(true).typed_expr());
     }
     let mut result = exprs[0].clone();
     for e in &exprs[1..] {
@@ -22,14 +22,24 @@ impl FuncDef {
         type_instantiations: &[Type],
     ) -> Result<Expr, TypeError> {
         assert!(self.type_params.len() == type_instantiations.len());
-        Ok(Expr::FunctionCall {
-            name: self.name.to_owned(),
-            args: args.iter().map(|e| CallArg::Expr(e.clone())).collect(),
-            type_instantiations: type_instantiations.to_owned(),
-            return_type: Some(
-                self.return_type
-                    .instantiate(&self.type_params, type_instantiations)?,
-            ),
+        Ok(Expr::Expr {
+            kind: ExprKind::Function {
+                name: self.name.to_owned(),
+                type_instantiations: type_instantiations.to_owned(),
+                mutable_args: self
+                    .args
+                    .iter()
+                    .map(|arg| arg.mutable)
+                    .collect(),
+            },
+            args: args.to_owned(),
+            info: ExprInfo {
+                typ: Some(self.return_type
+                    .instantiate(&self.type_params, type_instantiations)?),
+                pos: None,
+                id: "".to_owned(),
+                preconditions_checked: false,
+            },
         })
     }
 
@@ -60,15 +70,21 @@ pub trait Ops: Sized {
 
 impl Expr {
     pub fn zero() -> Expr {
-        Expr::Literal(Literal::U64(0))
+        Literal::U64(0).typed_expr()
     }
 
-    pub fn tuple_at(&self, index: u64) -> Result<Expr, TypeError> {
+    pub fn tuple_at(&self, index: usize) -> Result<Expr, TypeError> {
         if self.typ().is_round_seq() {
-            if index <= self.typ().get_round_seq_length().unwrap() {
-                Ok(Expr::SeqAt {
-                    seq: Box::new(self.clone()),
-                    index: Box::new(Expr::Literal(Literal::U64(index))),
+            if index as u64 <= self.typ().get_round_seq_length().unwrap() {
+                Ok(Expr::Expr {
+                    kind: ExprKind::TupleAt {len: self.typ().get_round_seq_length().unwrap() as usize, index},
+                    args: vec![self.clone()],
+                    info: ExprInfo {
+                        typ: Some(self.typ().get_round_elem_type(index as u64).unwrap().clone()),
+                        pos: None,
+                        id: "".to_owned(),
+                        preconditions_checked: false,
+                    },
                 })
             } else {
                 Err(TypeError {
@@ -148,7 +164,7 @@ impl Ops for Expr {
     fn seq_all(&self, predicate: &Expr) -> Result<Expr, TypeError> {
         let result = self
             .seq_map(predicate)?
-            .seq_foldl(&and_lambda(), &Expr::Literal(Literal::Bool(true)));
+            .seq_foldl(&and_lambda(), &Literal::Bool(true).typed_expr());
         result
     }
 
@@ -180,14 +196,8 @@ impl Ops for Expr {
 fn and_lambda() -> Expr {
     let var0 = "__item0__".to_owned();
     let var1 = "__item1__".to_owned();
-    let v0 = Expr::Variable {
-        name: var0.clone(),
-        typ: Some(Type::basic("bool")),
-    };
-    let v1 = Expr::Variable {
-        name: var1.clone(),
-        typ: Some(Type::basic("bool")),
-    };
+    let v0 = Type::basic("bool").var(&var0);
+    let v1 = Type::basic("bool").var(&var1);
     let body = v0.and(&v1).unwrap();
 
     Expr::Lambda {
@@ -204,5 +214,13 @@ fn and_lambda() -> Expr {
             },
         ],
         body: Box::new(body),
+        info: ExprInfo {
+            typ: Some(
+                Type::lambda(&[Type::basic("bool"),Type::basic("bool")], &Type::basic("bool"))
+            ),
+            pos: None,
+            id: "".to_owned(),
+            preconditions_checked: false,
+        },
     }
 }

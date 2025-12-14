@@ -3,6 +3,7 @@ use std::path::Path;
 use clap::Parser;
 
 mod check;
+mod subtype_chooser;
 mod syntax;
 mod type_inference;
 

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, slice::from_ref};
 // don't use std::ops::Ops here to avoid circular dependencies
 
-use crate::syntax::ast::{Arg, Expr, FuncDef, Literal, Type, TypeArg};
+use crate::syntax::ast::{Arg, Expr, ExprInfo, ExprKind, FuncDef, Literal, Type, TypeArg};
 
 thread_local! {
     static BUILTIN_FUNCTIONS: HashMap<String, FuncDef> = builtins();
@@ -54,7 +54,15 @@ pub fn all_builtins() -> HashMap<String, FuncDef> {
     BUILTIN_FUNCTIONS.with(|builtins| builtins.clone())
 }
 
-const DUMMY_BODY: Expr = Expr::Literal(Literal::Unit); // this isn't correct, but the body should be ignored for builtins
+fn dummy_body() -> Expr {
+    Expr::Expr {
+        kind: ExprKind::Literal {
+            literal: Literal::Unit,
+        },
+        args: vec![],
+        info: ExprInfo::default(),
+    }
+}
 
 impl FuncDef {
     pub fn simple(name: &str, arg_types: &[Type], return_type: &Type) -> Self {
@@ -83,7 +91,7 @@ impl FuncDef {
                 .collect::<Vec<Arg>>(),
             preconditions: vec![],
             postconditions: vec![],
-            body: DUMMY_BODY,
+            body: dummy_body(),
             type_params: type_param_list.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -146,11 +154,11 @@ fn builtins() -> HashMap<String, FuncDef> {
             preconditions: vec![],
             attributes: vec![],
             postconditions: vec![],
-            body: DUMMY_BODY,
+            body: dummy_body(),
         },
     );
 
-    for (symbol, name) in [("+", "add"), ("-", "sub"), ("*", "mul")] {
+    for (symbol, _name) in [("+", "add"), ("-", "sub"), ("*", "mul")] {
         functions.insert(
             symbol.to_owned(),
             FuncDef {
@@ -176,12 +184,12 @@ fn builtins() -> HashMap<String, FuncDef> {
                 name: symbol.to_owned(),
                 return_name: "__ret__".to_owned(),
                 postconditions: vec![],
-                body: DUMMY_BODY,
+                body: dummy_body(),
             },
         );
     }
 
-    for (symbol, name) in [("/", "div"), ("%", "mod")] {
+    for (symbol, _name) in [("/", "div"), ("%", "mod")] {
         functions.insert(
             symbol.to_owned(),
             FuncDef {
@@ -222,7 +230,7 @@ fn builtins() -> HashMap<String, FuncDef> {
                 name: symbol.to_owned(),
                 return_name: "__ret__".to_owned(),
                 postconditions: vec![],
-                body: DUMMY_BODY,
+                body: dummy_body(),
             },
         );
     }
@@ -286,24 +294,15 @@ fn builtins() -> HashMap<String, FuncDef> {
             type_params: vec!["T".to_owned()],
             preconditions: vec![
                 ge.make_func_call(&[
-                    Expr::Variable {
-                        name: "arg1".to_owned(),
-                        typ: Some(tint.clone()),
-                    },
+                    tint.var("arg1"),
                     Expr::zero(),
                 ])
                 .unwrap(),
                 lt.make_func_call(&[
-                    Expr::Variable {
-                        name: "arg1".to_owned(),
-                        typ: Some(tint.clone()),
-                    },
+                    tint.var("arg1"),
                     seq_len
                         .pmake_func_call(
-                            from_ref(&Expr::Variable {
-                                name: "arg0".to_owned(),
-                                typ: Some(vect.clone()),
-                            }),
+                            &[vect.var("arg0")],
                             &[tparam.clone()],
                         )
                         .unwrap(),
@@ -312,7 +311,7 @@ fn builtins() -> HashMap<String, FuncDef> {
             ],
             attributes: vec![],
             postconditions: vec![],
-            body: DUMMY_BODY,
+            body: dummy_body(),
         },
     );
     functions.insert(
@@ -337,7 +336,7 @@ fn builtins() -> HashMap<String, FuncDef> {
             type_params: vec!["T".to_owned()],
             preconditions: vec![],
             postconditions: vec![],
-            body: DUMMY_BODY,
+            body: dummy_body(),
         },
     );
     for name in ["+=", "-=", "*="] {
@@ -363,9 +362,13 @@ fn builtins() -> HashMap<String, FuncDef> {
                 type_params: vec![],
                 preconditions: vec![],
                 postconditions: vec![],
-                body: DUMMY_BODY,
+                body: dummy_body(),
             },
         );
     }
+    functions.insert(
+        ";".to_owned(),
+        FuncDef::psimple(";", &[tparam.clone(), uparam.clone()], &uparam, &["T", "U"]),
+    );
     functions
 }

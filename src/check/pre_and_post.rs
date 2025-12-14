@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    check::{ops::{Ops, big_and}, types::{TypeError, cartesian_product}},
-    syntax::ast::{CallArg, Expr, FuncDef, Stmt, Type},
+    check::{builtins::lookup_builtin, ops::{Ops, big_and}, types::{TypeError, cartesian_product}},
+    syntax::ast::{Expr, ExprKind, FuncDef, Type},
 };
 
 impl FuncDef {
@@ -98,47 +98,44 @@ impl FuncDef {
 
     pub fn postconditions_and_type_postconditions(
         &self,
+        args: &[Expr],
+        result: &Expr,
         type_instantiations: &[Type],
         outer_type_params: &[String],
     ) -> Result<Vec<Expr>, TypeError> {
         // Regular postconditions
-        let mut postconditions = self.postconditions
-            .iter()
-            .map(|t| t.type_subst(&self.type_params, type_instantiations))
-            .collect::<Result<Vec<_>, TypeError>>()?;
-
-        // Return type postcondition
-        let ret_inst = self
-            .return_type
-            .instantiate(&self.type_params, type_instantiations)?;
-        let return_var = Expr::Variable {
-            name: self.return_name.clone(),
-            typ: Some(ret_inst.skeleton(outer_type_params)?),
-        };
-        // let type_postconditions = ret_inst.type_assertions(return_var, outer_type_params)?;
-        // postconditions.extend(type_postconditions);
+        let mut postconditions = vec![];
+        if !self.postconditions.is_empty() {
+            assert!(self.type_params.len() == type_instantiations.len());
+            assert!(self.args.len() == args.len());
+            let mut arg_mapping = self
+                .args
+                .iter()
+                .map(|arg| arg.name.clone())
+                .zip(args.iter().cloned())
+                .collect::<HashMap<_, _>>();
+            arg_mapping.insert(
+                self.return_name.clone(),
+                result.clone(),
+            );
+            for pc in &self.postconditions {
+                postconditions.push(pc.type_subst(&self.type_params, type_instantiations)?.subst(&arg_mapping)?);
+            }
+        }
 
         // Flowthroughs
-        let mut args = vec![];
-        for arg in &self.args {
-            args.push(Expr::Variable {
-                name: arg.name.clone(),
-                typ: Some(
-                    arg.arg_type
-                        .instantiate(&self.type_params, type_instantiations)?
-                        .skeleton(outer_type_params)?,
-                ),
-            });
-        }
         for narrowing in self.possible_narrowings(type_instantiations)? {
             let narrowed_ret_inst = self
                 .return_type
                 .instantiate(&self.type_params, &narrowing)?;
             let flowthrough_postconditions =
-                narrowed_ret_inst.type_assertions(return_var.clone(), outer_type_params)?;
+                narrowed_ret_inst.type_assertions(result.clone(), outer_type_params)?;
             let mut flowthrough_preconditions = Expr::zero();
             for (i, pc) in flowthrough_postconditions.iter().enumerate() {
                 if i == 0 {
+                    // TODO: avoid preconditions if they're already covered?
+                    // e.g. fn(u32) -> u32
+                    // doesn't need flowthrough preconditions
                     flowthrough_preconditions =
                         big_and(&self.type_preconditions(&args, &narrowing, outer_type_params)?)?;
                 }
@@ -150,116 +147,149 @@ impl FuncDef {
     }
 }
 
-impl Stmt {
-    pub fn type_subst(
-        &self,
+// impl Stmt {
+//     pub fn type_subst(
+//         &self,
+//         type_params: &[String],
+//         type_instantiations: &[Type],
+//     ) -> Result<Stmt, TypeError> {
+//         match self {
+//             Stmt::Expr(expr) => {
+//                 let new_expr = expr.type_subst(type_params, type_instantiations)?;
+//                 Ok(Stmt::Expr(new_expr))
+//             }
+//             Stmt::Let {
+//                 name,
+//                 typ,
+//                 mutable,
+//                 value,
+//             } => {
+//                 let new_type = typ.as_ref().map(|t| t.instantiate(type_params, type_instantiations)).transpose()?;
+//                 let new_value = value.type_subst(type_params, type_instantiations)?;
+//                 Ok(Stmt::Let {
+//                     name: name.clone(),
+//                     typ: new_type,
+//                     mutable: *mutable,
+//                     value: new_value,
+//                 })
+//             }
+//             Stmt::Assign { name, value, op } => {
+//                 let new_value = value.type_subst(type_params, type_instantiations)?;
+//                 Ok(Stmt::Assign {
+//                     name: name.clone(),
+//                     op: *op,
+//                     value: new_value,
+//                 })
+//             }
+//         }
+//     }
+
+//     pub fn subst(
+//         &self,
+//         mapping: &HashMap<String, Expr>,
+//     ) -> Result<(Stmt, Option<String>), TypeError> {
+//         match self {
+//             Stmt::Expr(expr) => {
+//                 let new_expr = expr.subst(mapping)?;
+//                 Ok((Stmt::Expr(new_expr), None))
+//             }
+//             Stmt::Let {
+//                 name,
+//                 typ,
+//                 mutable,
+//                 value,
+//             } => {
+//                 let new_value = value.subst(mapping)?;
+//                 Ok((
+//                     Stmt::Let {
+//                         name: name.clone(),
+//                         typ: typ.clone(),
+//                         mutable: *mutable,
+//                         value: new_value,
+//                     },
+//                     Some(name.clone()),
+//                 ))
+//             }
+//             Stmt::Assign { name, value, op } => {
+//                 let new_value = value.subst(mapping)?;
+//                 Ok((
+//                     Stmt::Assign {
+//                         name: name.clone(),
+//                         op: *op,
+//                         value: new_value,
+//                     },
+//                     None,
+//                 ))
+//             }
+//         }
+//     }
+// }
+
+// impl CallArg {
+//     pub fn subst(&self, mapping: &HashMap<String, Expr>) -> Result<CallArg, TypeError> {
+//         match self {
+//             CallArg::Expr(e) => Ok(CallArg::Expr(e.subst(mapping)?)),
+//             CallArg::MutVar { name, typ } => {
+//                 // TODO: this doesn't really make sense - we can't substitute a mutable thing with an immutable thing
+//                 if let Some(replacement) = mapping.get(name) {
+//                     Ok(CallArg::Expr(replacement.clone()))
+//                 } else {
+//                     Ok(CallArg::MutVar {
+//                         name: name.clone(),
+//                         typ: typ.clone(),
+//                     })
+//                 }
+//             }
+//         }
+//     }
+
+//     pub fn type_subst(
+//         &self,
+//         type_params: &[String],
+//         type_instantiations: &[Type],
+//     ) -> Result<CallArg, TypeError> {
+//         match self {
+//             CallArg::Expr(e) => Ok(CallArg::Expr(e.type_subst(type_params, type_instantiations)?)),
+//             CallArg::MutVar { name, typ } => {
+//                 let new_type = typ.as_ref().map(|t| t.instantiate(type_params, type_instantiations)).transpose()?;
+//                 Ok(CallArg::MutVar {
+//                     name: name.clone(),
+//                     typ: new_type,
+//                 })
+//             }
+//         }
+//     }
+// }
+
+impl Type {
+    fn type_subst_in_place(
+        &mut self,
         type_params: &[String],
         type_instantiations: &[Type],
-    ) -> Result<Stmt, TypeError> {
-        match self {
-            Stmt::Expr(expr) => {
-                let new_expr = expr.type_subst(type_params, type_instantiations)?;
-                Ok(Stmt::Expr(new_expr))
-            }
-            Stmt::Let {
-                name,
-                typ,
-                mutable,
-                value,
-            } => {
-                let new_type = typ.as_ref().map(|t| t.instantiate(type_params, type_instantiations)).transpose()?;
-                let new_value = value.type_subst(type_params, type_instantiations)?;
-                Ok(Stmt::Let {
-                    name: name.clone(),
-                    typ: new_type,
-                    mutable: *mutable,
-                    value: new_value,
-                })
-            }
-            Stmt::Assign { name, value, op } => {
-                let new_value = value.type_subst(type_params, type_instantiations)?;
-                Ok(Stmt::Assign {
-                    name: name.clone(),
-                    op: *op,
-                    value: new_value,
-                })
-            }
-        }
-    }
-
-    pub fn subst(
-        &self,
-        mapping: &HashMap<String, Expr>,
-    ) -> Result<(Stmt, Option<String>), TypeError> {
-        match self {
-            Stmt::Expr(expr) => {
-                let new_expr = expr.subst(mapping)?;
-                Ok((Stmt::Expr(new_expr), None))
-            }
-            Stmt::Let {
-                name,
-                typ,
-                mutable,
-                value,
-            } => {
-                let new_value = value.subst(mapping)?;
-                Ok((
-                    Stmt::Let {
-                        name: name.clone(),
-                        typ: typ.clone(),
-                        mutable: *mutable,
-                        value: new_value,
-                    },
-                    Some(name.clone()),
-                ))
-            }
-            Stmt::Assign { name, value, op } => {
-                let new_value = value.subst(mapping)?;
-                Ok((
-                    Stmt::Assign {
-                        name: name.clone(),
-                        op: *op,
-                        value: new_value,
-                    },
-                    None,
-                ))
-            }
-        }
+    ) -> Result<(), TypeError> {
+        *self = self.instantiate(type_params, type_instantiations)?;
+        Ok(())
     }
 }
 
-impl CallArg {
-    pub fn subst(&self, mapping: &HashMap<String, Expr>) -> Result<CallArg, TypeError> {
-        match self {
-            CallArg::Expr(e) => Ok(CallArg::Expr(e.subst(mapping)?)),
-            CallArg::MutVar { name, typ } => {
-                // TODO: this doesn't really make sense - we can't substitute a mutable thing with an immutable thing
-                if let Some(replacement) = mapping.get(name) {
-                    Ok(CallArg::Expr(replacement.clone()))
-                } else {
-                    Ok(CallArg::MutVar {
-                        name: name.clone(),
-                        typ: typ.clone(),
-                    })
-                }
-            }
-        }
-    }
-
-    pub fn type_subst(
-        &self,
+impl ExprKind {
+    fn type_subst_in_place(
+        &mut self,
         type_params: &[String],
         type_instantiations: &[Type],
-    ) -> Result<CallArg, TypeError> {
+    ) -> Result<(), TypeError> {
         match self {
-            CallArg::Expr(e) => Ok(CallArg::Expr(e.type_subst(type_params, type_instantiations)?)),
-            CallArg::MutVar { name, typ } => {
-                let new_type = typ.as_ref().map(|t| t.instantiate(type_params, type_instantiations)).transpose()?;
-                Ok(CallArg::MutVar {
-                    name: name.clone(),
-                    typ: new_type,
-                })
+            ExprKind::Function {
+                name: _,
+                type_instantiations: call_type_instantiations,
+                mutable_args: _,
+            } => {
+                for t in call_type_instantiations.iter_mut() {
+                    t.type_subst_in_place(type_params, type_instantiations)?;
+                }
+                Ok(())
             }
+            _ => Ok(()), // Other cases can be implemented similarly
         }
     }
 }
@@ -270,49 +300,51 @@ impl Expr {
         type_params: &[String],
         type_instantiations: &[Type],
     ) -> Result<Expr, TypeError> {
+        let mut e = self.clone();
+        e.type_subst_in_place(type_params, type_instantiations)?;
+        Ok(e)
+    }
+
+    fn type_subst_in_place(
+        &mut self,
+        type_params: &[String],
+        type_instantiations: &[Type],
+    ) -> Result<(), TypeError> {
+        self.type_mut()
+            .as_mut()
+            .unwrap()
+            .type_subst_in_place(type_params, type_instantiations)?;
         match self {
-            Expr::Literal(literal) => Ok(Expr::Literal(literal.clone())),
-            Expr::Variable { name, typ } => {
-                let new_type = if let Some(t) = typ {
-                    Some(t.instantiate(type_params, type_instantiations)?)
-                } else {
-                    None
-                };
-                Ok(Expr::Variable {
-                    name: name.clone(),
-                    typ: new_type,
-                })
+            Expr::Variable { .. } => {
+                Ok(())
             }
-            Expr::FunctionCall {
-                name,
-                args,
-                return_type,
-                type_instantiations: call_type_instantiations,
-            } => {
-                let new_args = args
-                    .iter()
-                    .map(|arg| arg.type_subst(type_params, type_instantiations))
-                    .collect::<Result<Vec<_>, TypeError>>()?;
-                let new_return_type =
-                    return_type.as_ref().map(|t| t.instantiate(type_params, type_instantiations)).transpose()?;
-                let new_type_instantiations = call_type_instantiations
-                    .iter()
-                    .map(|t| t.instantiate(type_params, type_instantiations))
-                    .collect::<Result<Vec<_>, TypeError>>()?;
-                Ok(Expr::FunctionCall {
-                    name: name.clone(),
-                    args: new_args,
-                    return_type: new_return_type,
-                    type_instantiations: new_type_instantiations,
-                })
+            Expr::Expr { kind, args, .. } => {
+                kind.type_subst_in_place(type_params, type_instantiations)?;
+                for arg in args.iter_mut() {
+                    arg.type_subst_in_place(type_params, type_instantiations)?;
+                }
+                Ok(())
             }
-            _ => Ok(self.clone()), // Other cases can be implemented similarly
+            Expr::Let { typ, value, body, .. } => {
+                if let Some(t) = typ {
+                    t.type_subst_in_place(type_params, type_instantiations)?;
+                }
+                value.type_subst_in_place(type_params, type_instantiations)?;
+                body.type_subst_in_place(type_params, type_instantiations)?;
+                Ok(())
+            }
+            Expr::Lambda { args, body, .. } => {
+                for arg in args.iter_mut() {
+                    arg.arg_type.type_subst_in_place(type_params, type_instantiations)?;
+                }
+                body.type_subst_in_place(type_params, type_instantiations)?;
+                Ok(())
+            }
         }
     }
 
     pub fn subst(&self, mapping: &HashMap<String, Expr>) -> Result<Expr, TypeError> {
         match self {
-            Expr::Literal(literal) => Ok(Expr::Literal(literal.clone())),
             Expr::Variable { name, .. } => {
                 if let Some(replacement) = mapping.get(name) {
                     Ok(replacement.clone())
@@ -322,61 +354,22 @@ impl Expr {
                     })
                 }
             }
-            Expr::FunctionCall {
-                name,
+            Expr::Expr {
+                kind,
                 args,
-                return_type,
-                type_instantiations,
+                info,
             } => {
                 let new_args = args
                     .iter()
                     .map(|arg| arg.subst(mapping))
                     .collect::<Result<Vec<_>, TypeError>>()?;
-                Ok(Expr::FunctionCall {
-                    name: name.clone(),
+                Ok(Expr::Expr {
+                    kind: kind.clone(),
                     args: new_args,
-                    return_type: return_type.clone(),
-                    type_instantiations: type_instantiations.clone(),
+                    info: info.clone(),
                 })
             }
-            Expr::Semicolon(stmt, expr) => {
-                let (new_stmt, new_var) = stmt.subst(mapping)?;
-                if let Some(var_name) = new_var {
-                    let mut new_mapping = mapping.clone();
-                    new_mapping.insert(
-                        var_name.clone(),
-                        Expr::Variable {
-                            name: var_name.clone(),
-                            typ: None,
-                        },
-                    );
-                    let new_expr = expr.subst(&new_mapping)?;
-                    return Ok(Expr::Semicolon(Box::new(new_stmt), Box::new(new_expr)));
-                } else {
-                    let new_expr = expr.subst(mapping)?;
-                    Ok(Expr::Semicolon(Box::new(new_stmt), Box::new(new_expr)))
-                }
-            }
-            Expr::SquareSequence { elems, elem_type } => {
-                let new_elements = elems
-                    .iter()
-                    .map(|elem| elem.subst(mapping))
-                    .collect::<Result<Vec<Expr>, TypeError>>()?;
-                Ok(Expr::SquareSequence {
-                    elems: new_elements,
-                    elem_type: elem_type.clone(),
-                })
-            }
-            Expr::RoundSequence { elems } => {
-                let new_elements = elems
-                    .iter()
-                    .map(|elem| elem.subst(mapping))
-                    .collect::<Result<Vec<Expr>, TypeError>>()?;
-                Ok(Expr::RoundSequence {
-                    elems: new_elements,
-                })
-            }
-            Expr::Lambda { args, body } => {
+            Expr::Lambda { args, body, info } => {
                 let mut inner_mapping = mapping.clone();
                 for arg in args {
                     inner_mapping.insert(arg.name.clone(), arg.arg_type.var(&arg.name));
@@ -385,22 +378,89 @@ impl Expr {
                 Ok(Expr::Lambda {
                     args: args.clone(),
                     body: Box::new(new_body),
+                    info: info.clone(),
                 })
             }
-            Expr::SeqAt { seq, index } => {
-                let new_seq = seq.subst(mapping)?;
-                let new_index = index.subst(mapping)?;
-                Ok(Expr::SeqAt {
-                    seq: Box::new(new_seq),
-                    index: Box::new(new_index),
+            Expr::Let { name, mutable, typ, value, body, info } => {
+                let new_value = value.subst(mapping)?;
+                let mut inner_mapping = mapping.clone();
+                inner_mapping.insert(name.clone(), new_value.clone());
+                let new_body = body.subst(&inner_mapping)?;
+                Ok(Expr::Let {
+                    name: name.clone(),
+                    mutable: *mutable,
+                    typ: typ.clone(),
+                    value: Box::new(new_value),
+                    body: Box::new(new_body),
+                    info: info.clone(),
                 })
-            } // Expr::Cast { expr, to_type } => {
-              //     let new_expr = expr.subst(mapping)?;
-              //     Ok(Expr::Cast {
-              //         expr: Box::new(new_expr),
-              //         to_type: to_type.clone(),
-              //     })
-              // }
+            }
+        }
+    }
+}
+
+pub struct PreAndPost {
+    pub preconditions: Vec<Expr>,
+    pub postconditions: Vec<Expr>,
+}
+
+impl FuncDef {
+    fn find_by_name(funcs: &[FuncDef], name: &str) -> Result<FuncDef, TypeError> {
+        if let Some(builtin) = lookup_builtin(name) {
+            return Ok(builtin);
+        }
+        for func in funcs {
+            if func.name == name {
+                return Ok(func.clone());
+            }
+        }
+        Err(TypeError {
+            message: format!("Function {} not found", name),
+        })
+    }
+}
+
+impl ExprKind {
+    pub fn pre_and_post(&self, do_preconditions: bool, args:&[Expr], result: &Expr, funcs: &[FuncDef], outer_type_params: &[String]) -> Result<PreAndPost, TypeError> {
+        if !do_preconditions {
+            return Ok(PreAndPost {
+                preconditions: vec![],
+                postconditions: vec![],
+            });
+        }
+        match self {
+            ExprKind::Function {
+                name,
+                type_instantiations,
+                ..
+            } => {
+                let func = FuncDef::find_by_name(funcs, name)?;
+                let preconditions = func.lookup_preconditions(args, type_instantiations, outer_type_params)?;
+                let postconditions = func.postconditions_and_type_postconditions(args, result, type_instantiations, outer_type_params)?;
+                Ok(PreAndPost {
+                    preconditions,
+                    postconditions,
+                })
+            }
+            ExprKind::Literal{..} | ExprKind::SquareSequence{..} | ExprKind::RoundSequence{..} | ExprKind::TupleAt{..} => Ok(PreAndPost {
+                preconditions: vec![],
+                postconditions: vec![],
+            }),
+            ExprKind::UnknownSequenceAt{..} => unreachable!()
+        }
+    }
+
+    pub fn mutability(&self) -> Vec<bool> {
+        match self {
+            ExprKind::Function {
+                mutable_args,
+                ..
+            } => mutable_args.clone(),
+            ExprKind::Literal{..} => vec![],
+            ExprKind::SquareSequence{len} => vec![false; *len],
+            ExprKind::RoundSequence{len} => vec![false; *len],
+            ExprKind::TupleAt{..} => vec![false,false],
+            ExprKind::UnknownSequenceAt{..} => unreachable!(),
         }
     }
 }

@@ -46,41 +46,60 @@ pub enum Literal {
     Unit,
 }
 
-#[derive(Clone)]
-pub enum CallArg {
-    Expr(Expr),
-    MutVar { name: String, typ: Option<Type> },
+#[derive(Clone, Debug)]
+pub enum ExprKind {
+    Literal{literal: Literal},
+    Function{name: String, type_instantiations: Vec<Type>, mutable_args: Vec<bool>},
+    SquareSequence{len: usize},
+    RoundSequence{len: usize},
+    UnknownSequenceAt,
+    // VectorAt,
+    TupleAt{len: usize, index: usize},
+    // Semicolon,
+    // Assign{op: AssignOp},
+}
+
+#[derive(Clone, Copy)]
+pub struct CodePos(usize, usize);
+
+impl CodePos {
+    pub fn betweem(remainder0: &str, remainder1: &str) -> Self {
+        CodePos(remainder0.len(), remainder1.len())
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct ExprInfo {
+    pub typ: Option<Type>,
+    pub pos: Option<CodePos>,
+    pub id: String,
+    pub preconditions_checked: bool,
 }
 
 #[derive(Clone)]
 pub enum Expr {
-    Literal(Literal),
+    Expr {
+        kind: ExprKind,
+        args: Vec<Expr>,
+        info: ExprInfo,
+    },
     Variable {
         name: String,
-        typ: Option<Type>,
-    },
-    Semicolon(Box<Stmt>, Box<Expr>),
-    FunctionCall {
-        name: String,
-        args: Vec<CallArg>,
-        type_instantiations: Vec<Type>,
-        return_type: Option<Type>,
-    },
-    SquareSequence {
-        elems: Vec<Expr>,
-        elem_type: Option<Type>,
-    },
-    RoundSequence {
-        elems: Vec<Expr>,
+        info: ExprInfo,
     },
     Lambda {
         args: Vec<Arg>,
         body: Box<Expr>,
+        info: ExprInfo,
     },
-    SeqAt {
-        seq: Box<Expr>,
-        index: Box<Expr>,
-    },
+    Let {
+        name: String,
+        mutable: bool,
+        typ: Option<Type>,
+        value: Box<Expr>,
+        body: Box<Expr>,
+        info: ExprInfo,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -89,22 +108,6 @@ pub enum AssignOp {
     AddAssign,
     SubAssign,
     MulAssign,
-}
-
-#[derive(Clone)]
-pub enum Stmt {
-    Expr(Expr),
-    Let {
-        name: String,
-        mutable: bool,
-        typ: Option<Type>,
-        value: Expr,
-    },
-    Assign {
-        name: String,
-        op: AssignOp,
-        value: Expr,
-    },
 }
 
 #[derive(Clone)]
