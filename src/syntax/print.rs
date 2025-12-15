@@ -175,7 +175,7 @@ impl Expr {
         strength: BindingStrength,
     ) -> std::fmt::Result {
         match self {
-            Expr::Expr { kind, args, type_instantiations, .. } => {
+            Expr::Expr { kind, args, type_instantiations, info } => {
                 match kind {
                     ExprKind::Literal { literal } => write!(f, "{}", literal),
                     ExprKind::Function { name, .. } => {
@@ -244,6 +244,9 @@ impl Expr {
                         }
                     }
                     write!(f, ">")?;
+                }
+                if PRINT_TYPES && let Some(t) = info.chooser.int_instantiation.as_ref() {
+                    write!(f, "{{{}}}", t)?;
                 }
                 Ok(())
             }

@@ -15,13 +15,13 @@ impl std::fmt::Display for TypeError {
 }
 impl std::error::Error for TypeError {}
 
-impl TypeError {
-    pub fn with_context(self, context: &str) -> TypeError {
-        TypeError {
-            message: format!("{} {}", context, self.message),
-        }
-    }
-}
+// impl TypeError {
+//     pub fn with_context(self, context: &str) -> TypeError {
+//         TypeError {
+//             message: format!("{} {}", context, self.message),
+//         }
+//     }
+// }
 
 // impl Bound {
 //     pub fn as_expr(&self) -> Result<TExpr, TypeError> {
@@ -423,13 +423,13 @@ impl Type {
         }
     }
 
-    pub fn get_either_elem_type(&self, i: u64) -> Option<Type> {
-        if self.is_square_seq() {
-            self.get_uniform_square_elem_type()
-        } else {
-            self.get_round_elem_type(i)
-        }
-    }
+    // pub fn get_either_elem_type(&self, i: u64) -> Option<Type> {
+    //     if self.is_square_seq() {
+    //         self.get_uniform_square_elem_type()
+    //     } else {
+    //         self.get_round_elem_type(i)
+    //     }
+    // }
 
     pub fn get_round_elem_type_vector(&self) -> Option<Vec<Type>> {
         if self.name == "Tuple" {

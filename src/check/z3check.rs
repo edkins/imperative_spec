@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    check::{builtins::lookup_builtin, types::TypeError},
+    check::types::TypeError,
     syntax::ast::*,
 };
 use z3::{
@@ -139,18 +139,18 @@ impl CheckedVar {
         }
     }
 
-    fn new_with_value(name: &str, ty: &Type, skel_ty: &Type, value: &Dynamic) -> Self {
-        CheckedVar {
-            z3: value.clone(),
-            name: name.to_owned(),
-            version: 0,
-            max_version: 0,
-            hidden: false,
-            mutable: false,
-            var_type: ty.clone(),
-            var_skel_type: skel_ty.clone(),
-        }
-    }
+    // fn new_with_value(name: &str, ty: &Type, skel_ty: &Type, value: &Dynamic) -> Self {
+    //     CheckedVar {
+    //         z3: value.clone(),
+    //         name: name.to_owned(),
+    //         version: 0,
+    //         max_version: 0,
+    //         hidden: false,
+    //         mutable: false,
+    //         var_type: ty.clone(),
+    //         var_skel_type: skel_ty.clone(),
+    //     }
+    // }
 
     fn mutate(&mut self, type_params: &[String]) {
         assert!(!self.hidden);
@@ -362,25 +362,25 @@ impl Env {
             .clone())
     }
 
-    fn insert_var_with_value(
-        &mut self,
-        name: &str,
-        ty: &Type,
-        value: &Dynamic,
-    ) -> Result<(), CheckError> {
-        let skel_ty = ty.skeleton(&self.type_param_list)?;
-        assert!(
-            !self.vars.contains_key(name),
-            "Variable {} already defined",
-            name
-        );
-        if self.verbosity >= 2 {
-            println!("Inserting variable {} with value {:?}", name, value);
-        }
-        self.vars
-            .insert(name.to_owned(), CheckedVar::new_with_value(name, ty, &skel_ty, value));
-        Ok(())
-    }
+    // fn insert_var_with_value(
+    //     &mut self,
+    //     name: &str,
+    //     ty: &Type,
+    //     value: &Dynamic,
+    // ) -> Result<(), CheckError> {
+    //     let skel_ty = ty.skeleton(&self.type_param_list)?;
+    //     assert!(
+    //         !self.vars.contains_key(name),
+    //         "Variable {} already defined",
+    //         name
+    //     );
+    //     if self.verbosity >= 2 {
+    //         println!("Inserting variable {} with value {:?}", name, value);
+    //     }
+    //     self.vars
+    //         .insert(name.to_owned(), CheckedVar::new_with_value(name, ty, &skel_ty, value));
+    //     Ok(())
+    // }
 
     fn assume_exprs(&mut self, exprs: &[Expr]) -> Result<(), CheckError> {
         for expr in exprs {
@@ -788,19 +788,19 @@ fn z3_function_call(name: &str, args: &[Dynamic], env: &mut Env, type_instantiat
 }
 
 impl Env {
-    fn get_overloaded_func(&self, name: &str) -> Result<FuncDef, CheckError> {
-        if let Some(b) = lookup_builtin(name) {
-            Ok(b)
-        } else {
-            self.other_funcs
-                .iter()
-                .find(|f| f.name == name)
-                .cloned()
-                .ok_or_else(|| CheckError {
-                    message: format!("Undefined function: {}", name),
-                })
-        }
-    }
+    // fn get_overloaded_func(&self, name: &str) -> Result<FuncDef, CheckError> {
+    //     if let Some(b) = lookup_builtin(name) {
+    //         Ok(b)
+    //     } else {
+    //         self.other_funcs
+    //             .iter()
+    //             .find(|f| f.name == name)
+    //             .cloned()
+    //             .ok_or_else(|| CheckError {
+    //                 message: format!("Undefined function: {}", name),
+    //             })
+    //     }
+    // }
 
     // fn keep_optimizations(
     //     &mut self,

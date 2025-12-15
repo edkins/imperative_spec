@@ -91,6 +91,7 @@ pub fn assign(var: Expr, op: AssignOp, value: Expr) -> Expr {
 }
 
 impl Expr {
+    #[allow(dead_code)]
     pub fn get_info(&self) -> &ExprInfo {
         match self {
             Expr::Expr { info, .. } => info,

@@ -37,8 +37,8 @@ impl FuncDef {
                 typ: Some(self.return_type
                     .instantiate(&self.type_params, type_instantiations)?),
                 pos: None,
-                id: "".to_owned(),
                 preconditions_checked: false,
+                ..Default::default()
             },
         })
     }
@@ -61,9 +61,9 @@ pub trait Ops: Sized {
     fn seq_foldl(&self, f: &Self, initial: &Self) -> Result<Self, TypeError>;
     fn seq_all(&self, predicate: &Self) -> Result<Self, TypeError>;
     // fn seq_at(&self, index: &Self) -> Result<Self, TypeError>;
-    fn add(&self, other: &Self) -> Result<Self, TypeError>;
-    fn sub(&self, other: &Self) -> Result<Self, TypeError>;
-    fn mul(&self, other: &Self) -> Result<Self, TypeError>;
+    // fn add(&self, other: &Self) -> Result<Self, TypeError>;
+    // fn sub(&self, other: &Self) -> Result<Self, TypeError>;
+    // fn mul(&self, other: &Self) -> Result<Self, TypeError>;
     fn ge(&self, other: &Self) -> Result<Self, TypeError>;
     fn le(&self, other: &Self) -> Result<Self, TypeError>;
 }
@@ -83,8 +83,8 @@ impl Expr {
                     info: ExprInfo {
                         typ: Some(self.typ().get_round_elem_type(index as u64).unwrap().clone()),
                         pos: None,
-                        id: "".to_owned(),
                         preconditions_checked: false,
+                        ..Default::default()
                     },
                 })
             } else {
@@ -173,17 +173,17 @@ impl Ops for Expr {
     //     known_builtin("seq_at").make_func_call(&[self.clone(), index.clone()])
     // }
 
-    fn add(&self, other: &Expr) -> Result<Expr, TypeError> {
-        known_builtin("+").make_func_call(&[self.clone(), other.clone()])
-    }
+    // fn add(&self, other: &Expr) -> Result<Expr, TypeError> {
+    //     known_builtin("+").make_func_call(&[self.clone(), other.clone()])
+    // }
 
-    fn sub(&self, other: &Expr) -> Result<Expr, TypeError> {
-        known_builtin("-").make_func_call(&[self.clone(), other.clone()])
-    }
+    // fn sub(&self, other: &Expr) -> Result<Expr, TypeError> {
+    //     known_builtin("-").make_func_call(&[self.clone(), other.clone()])
+    // }
 
-    fn mul(&self, other: &Expr) -> Result<Expr, TypeError> {
-        known_builtin("*").make_func_call(&[self.clone(), other.clone()])
-    }
+    // fn mul(&self, other: &Expr) -> Result<Expr, TypeError> {
+    //     known_builtin("*").make_func_call(&[self.clone(), other.clone()])
+    // }
 
     fn ge(&self, other: &Expr) -> Result<Expr, TypeError> {
         known_builtin(">=").make_func_call(&[self.clone(), other.clone()])
@@ -220,8 +220,8 @@ fn and_lambda() -> Expr {
                 Type::lambda(&[Type::basic("bool"),Type::basic("bool")], &Type::basic("bool"))
             ),
             pos: None,
-            id: "".to_owned(),
             preconditions_checked: false,
+            ..Default::default()
         },
     }
 }

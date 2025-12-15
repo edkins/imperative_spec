@@ -26,45 +26,6 @@ struct HMEnv {
     mutable_vars: HashMap<String, Type>,
 }
 
-#[derive(Clone, Default)]
-struct TypeParamLookup(HashMap<String, Type>);
-
-impl TypeParamLookup {
-    fn translate_type_arg(&self, arg: &TypeArg) -> Result<TypeArg, TypeError> {
-        match arg {
-            TypeArg::Type(typ) => Ok(TypeArg::Type(self.translate_type(typ)?)),
-            TypeArg::Bound(b) => Ok(TypeArg::Bound(*b)),
-        }
-    }
-
-    fn translate_type(&self, typ: &Type) -> Result<Type, TypeError> {
-        if let Some(t) = self.0.get(&typ.name) {
-            if !t.type_args.is_empty() {
-                return Err(TypeError {
-                    message: format!("Type parameter {} cannot have type arguments", typ.name),
-                });
-            }
-            Ok(t.clone())
-        } else {
-            let translated_args = typ
-                .type_args
-                .iter()
-                .map(|arg| self.translate_type_arg(arg))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Type {
-                name: typ.name.clone(),
-                type_args: translated_args,
-            })
-        }
-    }
-}
-
-struct FunctionGeneralizationResult {
-    arg_types: Vec<Type>,
-    ret_type: Type,
-    type_param_lookup: TypeParamLookup,
-}
-
 impl Type {
     fn is_type_var(&self) -> bool {
         self.name.starts_with('\'') && self.type_args.is_empty()

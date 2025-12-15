@@ -86,11 +86,11 @@ impl Chooser {
     }
 
     fn soft_unify_types(&mut self, t0: &Type, t1: &Type, penalty: usize) -> Result<(), OptimizationError> {
-        println!("Soft unifying types: {:?} and {:?} with penalty {}", t0, t1, penalty);
+        // println!("Soft unifying types: {:?} and {:?} with penalty {}", t0, t1, penalty);
+        if t0 == t1 {
+            return Ok(());
+        }
         if t0.is_int_or_int_id() && t1.is_int_or_int_id() {
-            if t0 == t1 {
-                return Ok(());
-            }
             let z3_t0 = self.z3_typeval(t0)?;
             let z3_t1 = self.z3_typeval(t1)?;
             let eq = z3_t0.eq(&z3_t1);
@@ -99,14 +99,21 @@ impl Chooser {
                 println!("Adding soft constraint: {:?} == {:?} with penalty {}", t0, t1, penalty);
             }
             Ok(())
-        } else {
-            assert!(t0.name == t1.name);
-            assert!(t0.type_args.len() == t1.type_args.len());
-            for (arg0, arg1) in t0.type_args.iter().zip(t1.type_args.iter()) {
-                if let (TypeArg::Type(ta0), TypeArg::Type(ta1)) = (arg0, arg1) {
-                    self.soft_unify_types(ta0, ta1, penalty.max(10))?;  // increase the penalty for type args, e.g. Vec<u8>
-                }
+        } else if t0.is_round_seq() && t1.is_round_seq() {
+            let args0 = t0.get_round_elem_type_vector().unwrap();
+            let args1 = t1.get_round_elem_type_vector().unwrap();
+            assert!(args0.len() == args1.len());
+            for (arg0, arg1) in args0.iter().zip(args1.iter()) {
+                self.soft_unify_types(arg0, arg1, penalty)?;
             }
+            Ok(())
+        } else if t0.is_square_seq() && t1.is_square_seq() {
+            let arg0 = t0.get_uniform_square_elem_type().unwrap();
+            let arg1 = t1.get_uniform_square_elem_type().unwrap();
+            self.soft_unify_types(&arg0, &arg1, penalty.max(10))  // increase penalty for Vec/Array elements
+        } else {
+            assert!(t0.name == t1.name, "Cannot unify types {:?} and {:?}", t0, t1);
+            assert!(t0.type_args.len() == t1.type_args.len());
             Ok(())
         }
     }
@@ -120,7 +127,16 @@ impl Chooser {
                 for arg in args {
                     self.give_int_ids_to_expr(arg, env);
                 }
-                info.typ = Some(self.signature(&kind, type_instantiations).1);
+                let (arg_types, mut ret_type) = self.signature(&kind, type_instantiations, info.chooser.int_instantiation.as_ref());
+                if arg_types.iter().any(|t|t.is_int()) || ret_type.is_int() {
+                    // choose an int type for all remaining int arguments
+                    let t = self.fresh_int_id();
+                    info.chooser.int_instantiation = Some(Type::basic(&t));
+
+                    // recompute signature now that we've chosen an int instantiation
+                    (_, ret_type) = self.signature(&kind, type_instantiations, info.chooser.int_instantiation.as_ref());
+                }
+                info.typ = Some(ret_type);
             }
             Expr::Variable { name, info } => {
                 info.typ = Some(env.get(name).unwrap().clone());
@@ -152,14 +168,12 @@ impl Chooser {
 
     fn soft_checks_for_expr(&mut self, expr: &Expr) -> Result<(), OptimizationError> {
         match expr {
-            Expr::Expr { kind, args, type_instantiations, .. } => {
-                let (expected_arg_types, expected_ret_type) = self.signature(kind, type_instantiations);
+            Expr::Expr { kind, args, type_instantiations, info } => {
+                let (expected_arg_types, expected_ret_type) = self.signature(kind, type_instantiations, info.chooser.int_instantiation.as_ref());
                 assert!(expected_arg_types.len() == args.len());
                 for (arg, expected_type) in args.iter().zip(expected_arg_types.iter()) {
-                    if !arg.is_literal() {
-                        self.soft_unify_types(&arg.typ(), expected_type, 1)?;
-                        self.soft_checks_for_expr(arg)?;
-                    }
+                    self.soft_unify_types(&arg.typ(), expected_type, 1)?;
+                    self.soft_checks_for_expr(arg)?;
                 }
                 self.soft_unify_types(&expr.typ(), &expected_ret_type, 1)?;
             }
@@ -167,16 +181,19 @@ impl Chooser {
             Expr::Lambda { body, .. } => {
                 self.soft_checks_for_expr(body)?;
             }
-            Expr::Let { value, body, .. } => {
+            Expr::Let { value, body, typ, .. } => {
                 self.soft_checks_for_expr(value)?;
+                if typ.is_some() {
+                    self.soft_unify_types(&value.typ(), typ.as_ref().unwrap(), 1)?;
+                }
                 self.soft_checks_for_expr(body)?;
             }
         }
         Ok(())
     }
 
-    fn signature(&self, kind: &ExprKind, type_instantiations: &[Type]) -> (Vec<Type>, Type) {
-        match kind {
+    fn signature(&self, kind: &ExprKind, type_instantiations: &[Type], int_instantiation: Option<&Type>) -> (Vec<Type>, Type) {
+        let (arg_types, ret_type) = match kind {
             ExprKind::Function { name, .. } => {
                 let func_def = lookup_builtin(name).or_else(|| {
                     self.functions.get(name).cloned()
@@ -206,6 +223,24 @@ impl Chooser {
                 (vec![Type::tuple(type_instantiations)], elem_type)
             }
             ExprKind::UnknownSequenceAt{..} => unreachable!(),
+        };
+        if int_instantiation.is_some() {
+            let int_type = int_instantiation.unwrap();
+            let new_arg_types = arg_types.into_iter().map(|t| {
+                if t.is_int() {
+                    int_type.clone()
+                } else {
+                    t
+                }
+            }).collect();
+            let new_ret_type = if ret_type.is_int() {
+                int_type.clone()
+            } else {
+                ret_type
+            };
+            (new_arg_types, new_ret_type)
+        } else {
+            (arg_types, ret_type)
         }
     }
 
@@ -238,6 +273,55 @@ impl Chooser {
         }
         Ok(result)
     }
+
+    fn fill_in_expr(&self, expr: &mut Expr, int_type_map: &HashMap<String, Type>) {
+        match expr {
+            Expr::Expr { type_instantiations, info, args, .. } => {
+                for ty in type_instantiations.iter_mut() {
+                    if ty.is_int_id() {
+                        let concrete_type = int_type_map.get(&ty.name).unwrap().clone();
+                        *ty = concrete_type;
+                    }
+                }
+                if let Some(int_inst) = &info.chooser.int_instantiation {
+                    if int_inst.is_int_id() {
+                        let concrete_type = int_type_map.get(&int_inst.name).unwrap().clone();
+                        info.chooser.int_instantiation = Some(concrete_type);
+                    }
+                }
+                for arg in args {
+                    self.fill_in_expr(arg, int_type_map);
+                }
+            }
+            Expr::Variable { info, .. } => {
+                if let Some(int_inst) = &info.chooser.int_instantiation {
+                    if int_inst.is_int_id() {
+                        let concrete_type = int_type_map.get(&int_inst.name).unwrap().clone();
+                        info.typ = Some(concrete_type);
+                    }
+                }
+            }
+            Expr::Lambda { body, info, .. } => {
+                self.fill_in_expr(body, int_type_map);
+                if let Some(int_inst) = &info.chooser.int_instantiation {
+                    if int_inst.is_int_id() {
+                        let concrete_type = int_type_map.get(&int_inst.name).unwrap().clone();
+                        info.typ = Some(concrete_type);
+                    }
+                }
+            }
+            Expr::Let { value, body, info, .. } => {
+                self.fill_in_expr(value, int_type_map);
+                self.fill_in_expr(body, int_type_map);
+                if let Some(int_inst) = &info.chooser.int_instantiation {
+                    if int_inst.is_int_id() {
+                        let concrete_type = int_type_map.get(&int_inst.name).unwrap().clone();
+                        info.typ = Some(concrete_type);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn subtype_chooser(source_file: &mut SourceFile, verbosity: u8) -> Result<(), OptimizationError> {
@@ -257,8 +341,11 @@ pub fn subtype_chooser(source_file: &mut SourceFile, verbosity: u8) -> Result<()
         }
         chooser.soft_checks_for_expr(&mut func.body)?;
         chooser.functions.insert(func.name.clone(), func.clone());
+        let conc = chooser.conclusion()?;
+        chooser.fill_in_expr(&mut func.body, &conc);
         if verbosity >= 2 {
-            println!("{:?}", chooser.conclusion()?);
+            println!("{:?}", conc);
+            println!("After filling in types:\n{:?}", func.body);
         }
     }
 

@@ -17,6 +17,7 @@ pub struct Arg {
     pub arg_type: Type,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Eq, PartialEq)]
 pub enum FuncAttribute {
     CheckDecisions(Vec<String>),
@@ -59,6 +60,7 @@ pub enum ExprKind {
     // Assign{op: AssignOp},
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct CodePos(usize, usize);
 
@@ -72,8 +74,14 @@ impl CodePos {
 pub struct ExprInfo {
     pub typ: Option<Type>,
     pub pos: Option<CodePos>,
-    pub id: String,
+    // pub id: String,
     pub preconditions_checked: bool,
+    pub chooser: ChooserInfo,
+}
+
+#[derive(Clone, Default)]
+pub struct ChooserInfo {
+    pub int_instantiation: Option<Type>,
 }
 
 #[derive(Clone)]
