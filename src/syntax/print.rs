@@ -2,6 +2,8 @@ use std::fmt::Display;
 
 use crate::syntax::ast::*;
 
+const PRINT_TYPES: bool = true;
+
 impl Display for TypeArg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -173,74 +175,77 @@ impl Expr {
         strength: BindingStrength,
     ) -> std::fmt::Result {
         match self {
-            Expr::Expr { kind, args, type_instantiations, .. } => match kind {
-                ExprKind::Literal { literal } => write!(f, "{}", literal),
-                ExprKind::Function { name, .. } => {
-                    if name == ";" && args.len() == 2 {
-                        strength.open_brace(f, BindingStrength::Semicolon)?;
-                        args[0].fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
-                        writeln!(f, ";")?;
-                        args[1].fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
-                        strength.close_brace(f, BindingStrength::Semicolon)
-                    } else if let Some(op_strength) = binop_binding_strength(name) {
-                        strength.open_paren(f, op_strength)?;
-                        args[0].fmt_with_binding_strength(f, op_strength)?;
-                        write!(f, " {} ", name)?;
-                        args[1].fmt_with_binding_strength(f, op_strength)?;
-                        strength.close_paren(f, op_strength)
-                    } else {
-                        write!(f, "{}", name)?;
-                        if !type_instantiations.is_empty() {
-                            write!(f, "<")?;
-                            for (i, typ) in type_instantiations.iter().enumerate() {
-                                write!(f, "{}", typ)?;
-                                if i != type_instantiations.len() - 1 {
-                                    write!(f, ",")?;
+            Expr::Expr { kind, args, type_instantiations, .. } => {
+                match kind {
+                    ExprKind::Literal { literal } => write!(f, "{}", literal),
+                    ExprKind::Function { name, .. } => {
+                        if name == ";" && args.len() == 2 {
+                            strength.open_brace(f, BindingStrength::Semicolon)?;
+                            args[0].fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
+                            writeln!(f, ";")?;
+                            args[1].fmt_with_binding_strength(f, BindingStrength::Semicolon)?;
+                            strength.close_brace(f, BindingStrength::Semicolon)
+                        } else if let Some(op_strength) = binop_binding_strength(name) {
+                            strength.open_paren(f, op_strength)?;
+                            args[0].fmt_with_binding_strength(f, op_strength)?;
+                            write!(f, " {} ", name)?;
+                            args[1].fmt_with_binding_strength(f, op_strength)?;
+                            strength.close_paren(f, op_strength)
+                        } else {
+                            write!(f, "{}", name)?;
+                            write!(f, "(")?;
+                            for (i, arg) in args.iter().enumerate() {
+                                arg.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                                if i != args.len() - 1 {
+                                    write!(f, ", ")?;
                                 }
                             }
-                            write!(f, ">")?;
+                            write!(f, ")")?;
+                            Ok(())
                         }
-                        write!(f, "(")?;
-                        for (i, arg) in args.iter().enumerate() {
-                            arg.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                    }
+                    ExprKind::SquareSequence { .. } => {
+                        write!(f, "[")?;
+                        for (i, element) in args.iter().enumerate() {
+                            element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
                             if i != args.len() - 1 {
                                 write!(f, ", ")?;
                             }
                         }
-                        write!(f, ")")?;
-                        Ok(())
+                        write!(f, "]")
                     }
-                }
-                ExprKind::SquareSequence { .. } => {
-                    write!(f, "[")?;
-                    for (i, element) in args.iter().enumerate() {
-                        element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
-                        if i != args.len() - 1 {
-                            write!(f, ", ")?;
+                    ExprKind::RoundSequence { .. } => {
+                        write!(f, "(")?;
+                        for (i, element) in args.iter().enumerate() {
+                            element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
+                            if i != args.len() - 1 || args.len() == 1 {
+                                write!(f, ", ")?;
+                            }
+                        }
+                        write!(f, ")")
+                    }
+                    ExprKind::UnknownSequenceAt => {
+                        args[0].fmt_with_binding_strength(f, BindingStrength::AlwaysBracket)?;
+                        write!(f, "?[")?;
+                        args[1].fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
+                        write!(f, "]")
+                    }
+                    ExprKind::TupleAt { index, .. } => {
+                        args[0].fmt_with_binding_strength(f, BindingStrength::AlwaysBracket)?;
+                        write!(f, ".{}", index)
+                    }
+                }?;
+                if PRINT_TYPES && !type_instantiations.is_empty() {
+                    write!(f, "<")?;
+                    for (i, typ) in type_instantiations.iter().enumerate() {
+                        write!(f, "{}", typ)?;
+                        if i != type_instantiations.len() - 1 {
+                            write!(f, ",")?;
                         }
                     }
-                    write!(f, "]")
+                    write!(f, ">")?;
                 }
-                ExprKind::RoundSequence { .. } => {
-                    write!(f, "(")?;
-                    for (i, element) in args.iter().enumerate() {
-                        element.fmt_with_binding_strength(f, BindingStrength::Comma)?;
-                        if i != args.len() - 1 || args.len() == 1 {
-                            write!(f, ", ")?;
-                        }
-                    }
-                    write!(f, ")")
-                }
-                ExprKind::UnknownSequenceAt => {
-                    args[0].fmt_with_binding_strength(f, BindingStrength::AlwaysBracket)?;
-                    write!(f, "?[")?;
-                    args[1].fmt_with_binding_strength(f, BindingStrength::NeverBracket)?;
-                    write!(f, "]")
-                }
-                ExprKind::TupleAt { index, .. } => {
-                    args[0].fmt_with_binding_strength(f, BindingStrength::AlwaysBracket)?;
-                    write!(f, ".{}", index)
-                }
+                Ok(())
             }
             Expr::Variable { name, .. } => {
                 write!(f, "{}", name)

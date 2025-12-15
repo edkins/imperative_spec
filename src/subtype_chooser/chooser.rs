@@ -22,6 +22,7 @@ struct Chooser {
     next_id: usize,
     functions: HashMap<String, FuncDef>,
     int_choice_dt: z3::DatatypeSort,
+    verbosity: u8,
 }
 
 impl Type {
@@ -34,8 +35,14 @@ impl Type {
     }
 }
 
+impl Expr {
+    fn is_literal(&self) -> bool {
+        matches!(self, Expr::Expr { kind: ExprKind::Literal{..}, .. })
+    }
+}
+
 impl Chooser {
-    fn new() -> Self {
+    fn new(verbosity: u8) -> Self {
         let mut dt_builder = z3::DatatypeBuilder::new("IntChoice");
         for int_type in &INT_TYPES {
             dt_builder = dt_builder.variant(int_type, vec![]);
@@ -46,6 +53,7 @@ impl Chooser {
             next_id: 0,
             functions: HashMap::new(),
             int_choice_dt,
+            verbosity,
         }
     }
 
@@ -78,32 +86,41 @@ impl Chooser {
     }
 
     fn soft_unify_types(&mut self, t0: &Type, t1: &Type, penalty: usize) -> Result<(), OptimizationError> {
+        println!("Soft unifying types: {:?} and {:?} with penalty {}", t0, t1, penalty);
         if t0.is_int_or_int_id() && t1.is_int_or_int_id() {
-            let z3_t0 = self.z3_typeval(t0);
-            let z3_t1 = self.z3_typeval(t1);
-            if let (Ok(z3_t0), Ok(z3_t1)) = (z3_t0, z3_t1) {
-                let eq = z3_t0.eq(&z3_t1);
-                self.soft_constraints.push((eq, penalty));
+            if t0 == t1 {
+                return Ok(());
             }
-        }
-        assert!(t0.type_args.len() == t1.type_args.len());
-        for (arg0, arg1) in t0.type_args.iter().zip(t1.type_args.iter()) {
-            if let (TypeArg::Type(ta0), TypeArg::Type(ta1)) = (arg0, arg1) {
-                self.soft_unify_types(ta0, ta1, penalty.max(10))?;  // increase the penalty for type args, e.g. Vec<u8>
+            let z3_t0 = self.z3_typeval(t0)?;
+            let z3_t1 = self.z3_typeval(t1)?;
+            let eq = z3_t0.eq(&z3_t1);
+            self.soft_constraints.push((eq, penalty));
+            if self.verbosity >= 2 {
+                println!("Adding soft constraint: {:?} == {:?} with penalty {}", t0, t1, penalty);
             }
+            Ok(())
+        } else {
+            assert!(t0.name == t1.name);
+            assert!(t0.type_args.len() == t1.type_args.len());
+            for (arg0, arg1) in t0.type_args.iter().zip(t1.type_args.iter()) {
+                if let (TypeArg::Type(ta0), TypeArg::Type(ta1)) = (arg0, arg1) {
+                    self.soft_unify_types(ta0, ta1, penalty.max(10))?;  // increase the penalty for type args, e.g. Vec<u8>
+                }
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     fn give_int_ids_to_expr(&mut self, expr: &mut Expr, env: &HashMap<String, Type>) {
         match expr {
-            Expr::Expr { args, type_instantiations, .. } => {
-                for ty in type_instantiations {
+            Expr::Expr { kind, args, type_instantiations, info } => {
+                for ty in type_instantiations.iter_mut() {
                     self.give_int_ids(ty);
                 }
                 for arg in args {
                     self.give_int_ids_to_expr(arg, env);
                 }
+                info.typ = Some(self.signature(&kind, type_instantiations).1);
             }
             Expr::Variable { name, info } => {
                 info.typ = Some(env.get(name).unwrap().clone());
@@ -139,8 +156,10 @@ impl Chooser {
                 let (expected_arg_types, expected_ret_type) = self.signature(kind, type_instantiations);
                 assert!(expected_arg_types.len() == args.len());
                 for (arg, expected_type) in args.iter().zip(expected_arg_types.iter()) {
-                    self.soft_unify_types(&arg.typ(), expected_type, 1)?;
-                    self.soft_checks_for_expr(arg)?;
+                    if !arg.is_literal() {
+                        self.soft_unify_types(&arg.typ(), expected_type, 1)?;
+                        self.soft_checks_for_expr(arg)?;
+                    }
                 }
                 self.soft_unify_types(&expr.typ(), &expected_ret_type, 1)?;
             }
@@ -221,18 +240,26 @@ impl Chooser {
     }
 }
 
-pub fn subtype_chooser(source_file: &mut SourceFile) -> Result<(), OptimizationError> {
-    let mut chooser = Chooser::new();
+pub fn subtype_chooser(source_file: &mut SourceFile, verbosity: u8) -> Result<(), OptimizationError> {
+    let mut chooser = Chooser::new(verbosity);
 
     for func in &mut source_file.functions {
+        if verbosity >= 1 {
+            println!("Choosing subtypes for function {}", func.name);
+        }
         let mut env = HashMap::new();
         for arg in &func.args {
             env.insert(arg.name.clone(), arg.arg_type.clone());
         }
         chooser.give_int_ids_to_expr(&mut func.body, &env);
+        if verbosity >= 2 {
+            println!("After giving int ids:\n{:?}", func.body);
+        }
         chooser.soft_checks_for_expr(&mut func.body)?;
         chooser.functions.insert(func.name.clone(), func.clone());
-        chooser.conclusion()?;
+        if verbosity >= 2 {
+            println!("{:?}", chooser.conclusion()?);
+        }
     }
 
     Ok(())

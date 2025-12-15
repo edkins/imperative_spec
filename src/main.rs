@@ -26,7 +26,7 @@ fn all_checks(path: &Path, verbosity: u8) -> Result<(), String> {
         .map_err(|e| format!("Type inference failed: {}", e))?;
     check::z3check::z3_check(&source_file, verbosity)
         .map_err(|e| format!("Z3 check failed: {}", e))?;
-    subtype_chooser::chooser::subtype_chooser(&mut source_file)
+    subtype_chooser::chooser::subtype_chooser(&mut source_file, verbosity)
         .map_err(|e| format!("Subtype chooser failed: {}", e))?;
     Ok(())
 }
